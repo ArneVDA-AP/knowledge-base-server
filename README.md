@@ -235,6 +235,30 @@ Claude will use `kb_search` and return results from your accumulated knowledge.
 
 ---
 
+## Don't Want to Self-Host? Use Memstalker
+
+**[Memstalker](https://memstalker.com)** is the hosted version of knowledge-base-server. Same engine, zero infrastructure.
+
+| | Self-Hosted (Free) | Memstalker Hosted |
+|---|---|---|
+| **Cost** | Free forever | From $12/mo |
+| **Setup** | Clone, install, configure | Sign up, connect your agents |
+| **Infrastructure** | You run the VPS | We handle everything |
+| **Updates** | `git pull` | Automatic |
+| **Multi-device sync** | You configure | Built-in |
+| **Backups** | You manage | Automatic |
+| **All 16 MCP tools** | Yes | Yes |
+| **Obsidian integration** | Yes | Yes |
+| **REST API + ChatGPT** | Yes | Yes |
+
+**Self-host if:** You want full control, have a VPS, and enjoy running your own infrastructure.
+
+**Use Memstalker if:** You want persistent AI memory without managing servers. Connect your agents in minutes.
+
+First 500 early adopters get Pro at $12/mo forever (normally $25): [memstalker.com](https://memstalker.com)
+
+---
+
 ## MCP Tools
 
 All 16 tools available via MCP (stdio and HTTP):
@@ -535,7 +559,7 @@ AI is only as good as its context. This is the context layer.
 
 - [ ] Watch mode for auto-ingesting new vault files in real-time
 - [ ] Multi-user support with role-based access
-- [ ] Hosted SaaS version (self-hosted remains free and full-featured)
+- [x] Hosted SaaS version -- **[memstalker.com](https://memstalker.com)** (self-hosted remains free and full-featured)
 - [ ] Plugin system for custom ingestion sources
 - [ ] Ollama integration for fully local AI classification
 - [ ] WebSocket real-time updates on the dashboard
