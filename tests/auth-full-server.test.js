@@ -1,14 +1,19 @@
 // tests/auth-full-server.test.js — Test auth with full server middleware stack
 // This simulates the actual server.js setup including Better Auth catch-all
-import { describe, it } from 'node:test';
+import { describe, it, after } from 'node:test';
 import assert from 'node:assert';
 import express from 'express';
+import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { setPassword } from '../src/auth.js';
 import authRoutes from '../src/routes/auth-routes.js';
 import apiRoutes from '../src/routes/api.js';
+import { CONFIG_PATH } from '../src/paths.js';
 import cors from 'cors';
 import { toNodeHandler } from 'better-auth/node';
 import { auth } from '../src/auth-oauth.js';
+
+// Backup existing config before tests overwrite it
+const _configBackup = existsSync(CONFIG_PATH) ? readFileSync(CONFIG_PATH, 'utf-8') : null;
 
 const TEST_PASSWORD = 'testpass123';
 setPassword(TEST_PASSWORD);
@@ -44,6 +49,13 @@ async function withServer(fn) {
 }
 
 describe('Full server auth flow (with Better Auth)', () => {
+  // Restore original config after all tests
+  after(() => {
+    if (_configBackup !== null) {
+      writeFileSync(CONFIG_PATH, _configBackup);
+    }
+  });
+
   it('POST /api/login still works', async () => {
     await withServer(async (port) => {
       const res = await fetch(`http://localhost:${port}/api/login`, {

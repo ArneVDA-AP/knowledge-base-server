@@ -1,11 +1,16 @@
 // tests/auth-login.test.js — Test dashboard login → authenticated API flow
-import { describe, it, before } from 'node:test';
+import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert';
 import express from 'express';
+import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { setPassword, loginHandler, logoutHandler, checkAuthHandler, authMiddleware } from '../src/auth.js';
 import { getStats } from '../src/db.js';
 import authRoutes from '../src/routes/auth-routes.js';
 import apiRoutes from '../src/routes/api.js';
+import { CONFIG_PATH } from '../src/paths.js';
+
+// Backup existing config before tests overwrite it
+const _configBackup = existsSync(CONFIG_PATH) ? readFileSync(CONFIG_PATH, 'utf-8') : null;
 
 // Set a known password for testing
 const TEST_PASSWORD = 'testpass123';
@@ -31,6 +36,13 @@ async function withServer(fn) {
 }
 
 describe('Dashboard auth flow', () => {
+  // Restore original config after all tests
+  after(() => {
+    if (_configBackup !== null) {
+      writeFileSync(CONFIG_PATH, _configBackup);
+    }
+  });
+
   it('GET /api/stats without auth returns 401', async () => {
     await withServer(async (port) => {
       const res = await fetch(`http://localhost:${port}/api/stats`);
