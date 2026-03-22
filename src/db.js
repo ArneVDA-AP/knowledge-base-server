@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import { statSync } from 'fs';
+import { createHash } from 'crypto';
 import { DB_PATH } from './paths.js';
 
 let db = null;
@@ -29,6 +30,7 @@ function initSchema(db) {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       title TEXT NOT NULL,
       content TEXT NOT NULL,
+      content_hash TEXT,
       source TEXT,
       doc_type TEXT NOT NULL,
       tags TEXT DEFAULT '',
@@ -85,6 +87,15 @@ function initSchema(db) {
     CREATE INDEX IF NOT EXISTS idx_vault_files_project ON vault_files(project);
   `);
 
+  // Migration: add content_hash column to documents if missing
+  const docCols = db.prepare("PRAGMA table_info(documents)").all().map(c => c.name);
+  if (!docCols.includes('content_hash')) {
+    db.prepare('ALTER TABLE documents ADD COLUMN content_hash TEXT').run();
+  }
+  // Create unique index after migration (column is guaranteed to exist)
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_hash
+    ON documents(content_hash) WHERE content_hash IS NOT NULL;`);
+
   // Migration: add summary and key_topics columns if missing
   const cols = db.prepare("PRAGMA table_info(vault_files)").all().map(c => c.name);
   if (!cols.includes('summary')) {
@@ -116,15 +127,24 @@ function initSchema(db) {
 export { initSchema, getDb };
 
 export function insertDocument({ title, content, source, doc_type, tags, file_path, file_size }) {
-  const stmt = getDb().prepare(`
-    INSERT INTO documents (title, content, source, doc_type, tags, file_path, file_size)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+  const hash = createHash('sha256').update(content).digest('hex').slice(0, 32);
+  const db = getDb();
+  const stmt = db.prepare(`
+    INSERT OR IGNORE INTO documents (title, content, content_hash, source, doc_type, tags, file_path, file_size)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
-  const result = stmt.run(title, content, source || null, doc_type, tags || '', file_path || null, file_size || 0);
+  const result = stmt.run(title, content, hash, source || null, doc_type, tags || '', file_path || null, file_size || 0);
+
+  if (result.changes === 0) {
+    // Duplicate content — return existing document
+    return db.prepare('SELECT * FROM documents WHERE content_hash = ?').get(hash);
+  }
+
   return {
     id: result.lastInsertRowid,
     title,
     content,
+    content_hash: hash,
     source: source || null,
     doc_type,
     tags: tags || '',
@@ -199,7 +219,7 @@ export function searchDocuments(query, limit = 20) {
   const stmt = getDb().prepare(`
     SELECT d.id, d.title,
       snippet(documents_fts, 1, '<mark>', '</mark>', '...', 30) as snippet,
-      d.doc_type, d.tags, d.file_size, d.created_at,
+      d.doc_type, d.tags, d.file_size, d.created_at, d.updated_at,
       bm25(documents_fts, 10.0, 1.0, 5.0) as rank
     FROM documents_fts f
     JOIN documents d ON d.id = f.rowid
