@@ -2,6 +2,7 @@
 import { Router } from 'express';
 import { homedir } from 'os';
 import { join } from 'path';
+import { existsSync, unlinkSync } from 'fs';
 
 import {
   searchDocuments,
@@ -9,6 +10,7 @@ import {
   getDocument,
   getStats,
   getDb,
+  deleteDocument,
 } from '../db.js';
 import { ingestText } from '../ingest.js';
 
@@ -182,6 +184,27 @@ router.get('/documents/:id', (req, res) => {
       return res.status(404).json({ error: 'Document not found' });
     }
     res.json(doc);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /documents/:id — delete a document
+router.delete('/documents/:id', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) {
+    return res.status(400).json({ error: 'Invalid document id' });
+  }
+  try {
+    const doc = getDocument(id);
+    if (!doc) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+    const filePath = deleteDocument(id);
+    if (filePath && existsSync(filePath)) {
+      try { unlinkSync(filePath); } catch {}
+    }
+    res.json({ deleted: true, id, title: doc.title, doc_type: doc.doc_type });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

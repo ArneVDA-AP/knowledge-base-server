@@ -1,5 +1,5 @@
 import { readFileSync, statSync, readdirSync, copyFileSync, existsSync } from 'fs';
-import { extname, basename, join } from 'path';
+import { extname, basename, join, relative } from 'path';
 import { FILES_DIR } from './paths.js';
 import { insertDocument, listDocuments } from './db.js';
 
@@ -79,19 +79,52 @@ export async function ingestFile(filePath) {
 
 const IGNORE_DIRS = new Set([
   'node_modules', '.git', 'dist', 'build', '__pycache__',
+  'coverage', '.venv', 'venv',
 ]);
 
-export function collectFiles(dir) {
+function loadGitignorePatterns(rootDir) {
+  const gitignorePath = join(rootDir, '.gitignore');
+  if (!existsSync(gitignorePath)) return [];
+  return readFileSync(gitignorePath, 'utf8')
+    .split('\n')
+    .map(l => l.trim())
+    .filter(l => l && !l.startsWith('#'));
+}
+
+function isIgnoredByGitignore(relPath, patterns) {
+  for (const pattern of patterns) {
+    // Strip leading slash for anchored patterns
+    const p = pattern.startsWith('/') ? pattern.slice(1) : pattern;
+    // Directory pattern (trailing slash): match path segments
+    if (p.endsWith('/')) {
+      const dir = p.slice(0, -1);
+      if (relPath === dir || relPath.startsWith(dir + '/')) return true;
+      continue;
+    }
+    // Simple glob: match basename or full relative path
+    if (relPath === p || relPath.endsWith('/' + p)) return true;
+  }
+  return false;
+}
+
+export function collectFiles(dir, rootDir = dir, gitignorePatterns = null) {
+  if (gitignorePatterns === null) {
+    gitignorePatterns = loadGitignorePatterns(rootDir);
+  }
   const results = [];
   const entries = readdirSync(dir, { withFileTypes: true });
   for (const entry of entries) {
+    const fullPath = join(dir, entry.name);
+    const relPath = relative(rootDir, fullPath).replace(/\\/g, '/');
     if (entry.isDirectory()) {
       if (IGNORE_DIRS.has(entry.name)) continue;
-      results.push(...collectFiles(join(dir, entry.name)));
+      if (isIgnoredByGitignore(relPath, gitignorePatterns)) continue;
+      results.push(...collectFiles(fullPath, rootDir, gitignorePatterns));
     } else if (entry.isFile()) {
+      if (isIgnoredByGitignore(relPath, gitignorePatterns)) continue;
       const ext = extname(entry.name).toLowerCase();
       if (TYPE_MAP[ext]) {
-        results.push(join(dir, entry.name));
+        results.push(fullPath);
       }
     }
   }
