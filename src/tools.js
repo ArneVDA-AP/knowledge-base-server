@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import { writeFileSync, mkdirSync } from 'fs';
+import { writeFileSync, mkdirSync, existsSync, unlinkSync } from 'fs';
 import { join } from 'path';
-import { searchDocuments, listDocuments, getDocument, getStats, getDb } from './db.js';
+import { searchDocuments, listDocuments, getDocument, getStats, getDb, deleteDocument } from './db.js';
 import { ingestText } from './ingest.js';
 import { indexVault } from './vault/indexer.js';
 import { captureYouTube } from './capture/youtube.js';
@@ -18,6 +18,7 @@ const ADMIN_ONLY_TOOLS = new Set([
   'kb_synthesize',
   'kb_safety_check',
   'kb_capture_youtube',
+  'kb_delete',
 ]);
 
 export function getToolDefinitions() {
@@ -370,11 +371,17 @@ export function getToolDefinitions() {
               project: vf?.project || null,
               summary: vf?.summary || r.snippet?.replace(/<\/?mark>/g, '').slice(0, 200),
               key_topics: vf?.key_topics || null,
+              created_at: r.created_at,
+              updated_at: r.updated_at,
             };
           });
 
           if (project || type) {
-            let sql = 'SELECT vf.document_id as id, vf.title, vf.note_type, vf.tags, vf.project, vf.summary, vf.key_topics FROM vault_files vf WHERE 1=1';
+            let sql = `SELECT vf.document_id as id, vf.title, vf.note_type, vf.tags, vf.project, vf.summary, vf.key_topics,
+              d.created_at, d.updated_at
+              FROM vault_files vf
+              LEFT JOIN documents d ON d.id = vf.document_id
+              WHERE 1=1`;
             const params = [];
             if (project) { sql += ' AND vf.project = ?'; params.push(project); }
             if (type) { sql += ' AND vf.note_type = ?'; params.push(type); }
@@ -384,7 +391,7 @@ export function getToolDefinitions() {
             const seenIds = new Set(briefings.map(b => b.id));
             for (const f of filtered) {
               if (!seenIds.has(f.id)) {
-                briefings.push({ id: f.id, title: f.title, type: f.note_type, tags: f.tags, project: f.project, summary: f.summary, key_topics: f.key_topics });
+                briefings.push({ id: f.id, title: f.title, type: f.note_type, tags: f.tags, project: f.project, summary: f.summary, key_topics: f.key_topics, created_at: f.created_at, updated_at: f.updated_at });
               }
             }
           }
@@ -409,6 +416,31 @@ export function getToolDefinitions() {
           const result = await reviewDestructiveAction(action, context);
           const prefix = result.safe ? 'SAFE' : 'BLOCKED';
           return { content: [{ type: 'text', text: `[${prefix}] Risk: ${result.risk_level}\n\n${JSON.stringify(result, null, 2)}` }] };
+        } catch (err) {
+          return { content: [{ type: 'text', text: `Error: ${err.message}` }], isError: true };
+        }
+      },
+    },
+
+    {
+      name: 'kb_delete',
+      description: 'Delete a document from the knowledge base by ID. Removes the document, its FTS index entries, and any embeddings. If the document was ingested from a file, the stored copy is also deleted. Use kb_list or kb_search to find document IDs first.',
+      schema: {
+        id: z.number().describe('Document ID to delete'),
+      },
+      handler: async ({ id }) => {
+        try {
+          const doc = getDocument(id);
+          if (!doc) {
+            return { content: [{ type: 'text', text: `Error: Document with ID ${id} not found.` }], isError: true };
+          }
+          const filePath = deleteDocument(id);
+          if (filePath && existsSync(filePath)) {
+            try { unlinkSync(filePath); } catch { /* non-fatal */ }
+          }
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ deleted: true, id, title: doc.title, doc_type: doc.doc_type }) }],
+          };
         } catch (err) {
           return { content: [{ type: 'text', text: `Error: ${err.message}` }], isError: true };
         }

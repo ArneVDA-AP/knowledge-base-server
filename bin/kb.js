@@ -2,7 +2,12 @@
 // bin/kb.js — CLI entry point
 // Commands: start, stop, mcp, register, ingest <path>, search <query>, status, setup
 
-import 'dotenv/config';
+import { config } from 'dotenv';
+import { fileURLToPath } from 'url';
+import { dirname, resolve } from 'path';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+config({ path: resolve(__dirname, '..', '.env') });
 
 const command = process.argv[2];
 const args = process.argv.slice(3);
@@ -14,6 +19,7 @@ const commands = {
   register: () => import('../src/cli/register.js').then(m => m.register()),
   ingest:   () => import('../src/cli/ingest-cli.js').then(m => m.ingest(args[0])),
   search:   () => import('../src/cli/search-cli.js').then(m => m.search(args.join(' '))),
+  delete:   () => import('../src/cli/delete-cli.js').then(m => m.deleteCommand(args)),
   status:   () => import('../src/cli/status.js').then(m => m.status()),
   'capture-x': () => import('../src/capture/x-bookmarks.js').then(m => {
     const bookmarksPath = args[0] || (process.env.HOME + '/knowledgebase/x_bookmarks.md');
@@ -74,6 +80,7 @@ Commands:
   register           Register MCP server with Claude Code
   ingest <path>      Ingest a file or directory
   search <query>     Search documents
+  delete <id> [...]  Delete document(s) by ID
   status             Show stats and server status
   vault reindex      Reindex Obsidian vault
   classify           Auto-classify new clippings/inbox notes (--dry-run to preview)
