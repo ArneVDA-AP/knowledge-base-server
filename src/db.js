@@ -126,6 +126,10 @@ function initSchema(db) {
 
 export { initSchema, getDb };
 
+// Test helpers — inject/reset the DB singleton for isolated unit tests
+export function _setTestDb(testDb) { db = testDb; }
+export function _resetDb() { db = null; }
+
 export function insertDocument({ title, content, source, doc_type, tags, file_path, file_size }) {
   const hash = createHash('sha256').update(content).digest('hex').slice(0, 32);
   const db = getDb();
