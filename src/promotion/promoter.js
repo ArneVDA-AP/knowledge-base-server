@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { parseVaultNote } from '../vault/parser.js';
+import { formatYamlTags } from '../utils/frontmatter.js';
 import { CLASSIFY_PROMPT, PROMOTE_PROMPT } from './prompts.js';
 
 // Promotion destinations by classification
@@ -72,7 +73,7 @@ export async function promoteNote(notePath, vaultPath, llmCall) {
       `source: "${notePath}"`,
       `created: "${date}"`,
       `updated: "${date}"`,
-      `tags: [${tags.join(', ')}]`,
+      formatYamlTags(tags),
       classData.projects?.[0] ? `project: ${classData.projects[0]}` : null,
       `status: active`,
       '---',

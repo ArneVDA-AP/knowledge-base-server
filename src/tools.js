@@ -3,6 +3,7 @@ import { writeFileSync, mkdirSync, existsSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { searchDocuments, listDocuments, getDocument, getStats, getDb, deleteDocument } from './db.js';
 import { ingestText } from './ingest.js';
+import { formatYamlTags } from './utils/frontmatter.js';
 import { indexVault } from './vault/indexer.js';
 import { captureYouTube } from './capture/youtube.js';
 import { captureWeb } from './capture/web.js';
@@ -137,7 +138,7 @@ export function getToolDefinitions() {
             `type: ${type}`,
             `created: "${date}"`,
             `updated: "${date}"`,
-            `tags: [${tagList.join(', ')}]`,
+            formatYamlTags(tagList),
           ];
           if (project) fm.push(`project: ${project}`);
           fm.push('status: active');
