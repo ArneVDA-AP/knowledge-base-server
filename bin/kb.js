@@ -20,6 +20,7 @@ const commands = {
   ingest:   () => import('../src/cli/ingest-cli.js').then(m => m.ingest(args[0])),
   search:   () => import('../src/cli/search-cli.js').then(m => m.search(args.join(' '))),
   delete:   () => import('../src/cli/delete-cli.js').then(m => m.deleteCommand(args)),
+  'token-compare': () => import('../src/cli/token-compare.js').then(m => m.tokenCompare(args)),
   status:   () => import('../src/cli/status.js').then(m => m.status()),
   'capture-x': () => import('../src/capture/x-bookmarks.js').then(m => {
     const bookmarksPath = args[0] || (process.env.HOME + '/knowledgebase/x_bookmarks.md');
@@ -81,6 +82,7 @@ Commands:
   ingest <path>      Ingest a file or directory
   search <query>     Search documents
   delete <id> [...]  Delete document(s) by ID
+  token-compare      Compare raw doc tokens vs KB summary tokens
   status             Show stats and server status
   vault reindex      Reindex Obsidian vault
   classify           Auto-classify new clippings/inbox notes (--dry-run to preview)
