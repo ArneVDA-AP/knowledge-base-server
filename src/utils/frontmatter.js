@@ -13,7 +13,8 @@ export function formatYamlTags(tags) {
   return 'tags:\n' + cleaned.map(t => {
     // Quote tags containing YAML-special characters
     if (/[:#\[\]*&!|>{},%@`]/.test(t) || t.includes("'") || t.includes('"')) {
-      return `  - "${t.replace(/"/g, '\\"')}"`;
+      const escaped = t.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      return `  - "${escaped}"`;
     }
     return `  - ${t}`;
   }).join('\n');
