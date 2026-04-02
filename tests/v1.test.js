@@ -183,4 +183,81 @@ describe('v1 API', () => {
       assert.strictEqual(res.status, 403);
     });
   });
+
+  it('DELETE /api/v1/documents/:id deletes a document (200)', async () => {
+    await withServer(async (port) => {
+      // Create a document first
+      const ingestRes = await fetch(`http://localhost:${port}/api/v1/ingest`, {
+        method: 'POST',
+        headers: AUTH,
+        body: JSON.stringify({ title: 'Delete Me', content: 'Content to be deleted via API.' }),
+      });
+      assert.strictEqual(ingestRes.status, 201);
+      const { id } = await ingestRes.json();
+
+      // Delete it
+      const delRes = await fetch(`http://localhost:${port}/api/v1/documents/${id}`, {
+        method: 'DELETE',
+        headers: { 'X-API-Key': 'test-key-123' },
+      });
+      assert.strictEqual(delRes.status, 200);
+      const data = await delRes.json();
+      assert.strictEqual(data.deleted, true);
+      assert.strictEqual(data.id, id);
+
+      // Verify it's gone
+      const getRes = await fetch(`http://localhost:${port}/api/v1/documents/${id}`, {
+        headers: { 'X-API-Key': 'test-key-123' },
+      });
+      assert.strictEqual(getRes.status, 404);
+    });
+  });
+
+  it('DELETE /api/v1/documents/:id returns 404 for unknown id', async () => {
+    await withServer(async (port) => {
+      const res = await fetch(`http://localhost:${port}/api/v1/documents/999999`, {
+        method: 'DELETE',
+        headers: { 'X-API-Key': 'test-key-123' },
+      });
+      assert.strictEqual(res.status, 404);
+    });
+  });
+
+  it('POST /api/v1/ingest deduplicates identical content', async () => {
+    await withServer(async (port) => {
+      const unique = `Dedup test content ${Date.now()} ${Math.random()}`;
+      const body = JSON.stringify({ title: 'Dedup Test', content: unique });
+
+      const first = await fetch(`http://localhost:${port}/api/v1/ingest`, {
+        method: 'POST', headers: AUTH, body,
+      });
+      const second = await fetch(`http://localhost:${port}/api/v1/ingest`, {
+        method: 'POST', headers: AUTH, body,
+      });
+
+      const d1 = await first.json();
+      const d2 = await second.json();
+      assert.strictEqual(d1.id, d2.id, 'Duplicate content should return same document id');
+    });
+  });
+
+  it('GET /api/v1/search finds a freshly ingested document', async () => {
+    await withServer(async (port) => {
+      const keyword = `searchable${Date.now()}`;
+      await fetch(`http://localhost:${port}/api/v1/ingest`, {
+        method: 'POST',
+        headers: AUTH,
+        body: JSON.stringify({ title: 'Search Target', content: `Contains the keyword ${keyword}.` }),
+      });
+
+      const res = await fetch(`http://localhost:${port}/api/v1/search?q=${keyword}`, {
+        headers: { 'X-API-Key': 'test-key-123' },
+      });
+      assert.strictEqual(res.status, 200);
+      const data = await res.json();
+      assert.ok(Array.isArray(data.results));
+      assert.ok(data.results.length > 0, 'Should find the ingested document');
+      assert.ok(data.results.some(r => r.title === 'Search Target'));
+    });
+  });
 });
