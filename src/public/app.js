@@ -4,15 +4,11 @@ let currentDocId = null;
 
 // Init
 document.addEventListener('DOMContentLoaded', async () => {
-  try {
-    const res = await fetch('/api/auth-check');
-    const data = await res.json();
-    if (data.authenticated) {
-      showApp();
-    } else {
-      showLogin();
-    }
-  } catch {
+  const res = await fetch('/api/session/check');
+  const data = await res.json();
+  if (data.authenticated) {
+    showApp();
+  } else {
     showLogin();
   }
 });
@@ -37,7 +33,7 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
   btn.disabled = true;
   btn.textContent = 'Signing in…';
   try {
-    const res = await fetch('/api/login', {
+    const res = await fetch('/api/session/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ password }),
@@ -46,9 +42,7 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
       showApp();
     } else {
       const err = document.getElementById('login-error');
-      err.textContent = res.status === 429
-        ? 'Too many login attempts. Please try again in 15 minutes.'
-        : 'Invalid password';
+      err.textContent = 'Invalid password';
       err.hidden = false;
     }
   } finally {
@@ -89,7 +83,7 @@ function showSection(name) {
 
 // Logout
 document.getElementById('logout-btn').addEventListener('click', async () => {
-  await fetch('/api/logout', { method: 'POST' });
+  await fetch('/api/session/logout', { method: 'POST' });
   showLogin();
 });
 
@@ -341,7 +335,7 @@ document.getElementById('password-form').addEventListener('submit', async (e) =>
   e.preventDefault();
   const current = document.getElementById('current-password').value;
   const newPassword = document.getElementById('new-password').value;
-  const res = await fetch('/api/password', {
+  const res = await fetch('/api/session/password', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ current: current, newPassword: newPassword }),

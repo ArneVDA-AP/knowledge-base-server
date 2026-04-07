@@ -1,5 +1,29 @@
 # progress.md — newest on top
 
+## 2026-04-07 — .env migratie + OAuth herstel + Better Auth auto-migrate
+- **Probleem:** MCP Web UI auth kapot na `.env` locatieverandering (paths.js laadt nu `~/.knowledge-base/.env`, niet repo-root). `~/.knowledge-base/.env` bestond niet → alle env vars (incl. `KB_API_KEY_CLAUDE`, `BETTER_AUTH_SECRET`) ontbraken.
+- **Fix:** `.env` verplaatst van repo-root naar `~/.knowledge-base/.env`.
+- **Probleem 2:** `auth.db` verwijderd → OAuth user weg, Better Auth schema weg → 500 op sign-up.
+- **Fix:** `npx @better-auth/cli migrate -y` uitgevoerd. User opnieuw aangemaakt via `POST /api/auth/sign-up/email`.
+- **Feature:** `src/auth-oauth.js` detecteert nu bij startup of `user` tabel ontbreekt en runt automatisch de migratie (via `spawnSync npx @better-auth/cli migrate -y`). Nooit meer manueel nodig.
+
+## 2026-04-05 — Upstream sync (willynikes2) — 70/70 tests groen
+Upstream geanalyseerd (12 commits achter). Selectief gemerged — Kaiba-features (dedup, delete, tests) behouden.
+
+**Overgenomen:**
+- `src/capture/web.js` — dedup 'web' tag bug fix
+- `src/paths.js` — `ENV_PATH` export + .env laadt uit `~/.knowledge-base/.env` (npx-safe)
+- `src/auth.js` — sessions in-memory `Map` i.p.v. SQLite (lost DB-load-at-import pitfall op)
+- `src/routes/session-routes.js` — nieuw, vervangt auth-routes.js; routes onder `/api/session/*`
+- `src/routes/api.js` — `busboy` → `multer` voor file uploads
+- `src/public/app.js` — routes bijgewerkt naar `/api/session/*`; XSS-sanitization behouden
+- `src/cli/setup.js` — `which kb` voor systemd/launchd; KB_DIR/ENV_PATH; npx-detectie + warning
+- `bin/kb.js` — dotenv replaced by `import '../src/paths.js'`
+- `package.json` — node >=20, multer, `files` field, main → server.js
+- **4 nieuwe/uitgebreide tests**: npx-compat, paths, setup, vault-parser (round-trip tags)
+
+**Bewust overgeslagen:** db.js dedup-removal, CLI delete-removal, XSS-revert in app.js
+
 ## 2026-04-02 — Branch cleanup, upstream sync, token-compare feature
 - **Branch opgeruimd** (`feature/dedup-and-delete`):
   - Windows/Google Drive duplicaat-bestanden verwijderd (`tests/**(1).test.js`)

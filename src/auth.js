@@ -3,21 +3,9 @@ import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { randomBytes } from 'crypto';
 import { createInterface } from 'readline';
 import { CONFIG_PATH } from './paths.js';
-import { getDb } from './db.js';
 
+const sessions = new Map(); // token -> { expiresAt }
 const SESSION_TTL = 24 * 60 * 60 * 1000; // 24 hours
-
-// Initialise sessions table and purge any already-expired rows.
-function initSessions() {
-  const db = getDb();
-  db.exec(`CREATE TABLE IF NOT EXISTS sessions (
-    token TEXT PRIMARY KEY,
-    expires_at INTEGER NOT NULL
-  )`);
-  db.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(Date.now());
-}
-
-initSessions();
 
 /**
  * Check if a password has been configured.
@@ -90,7 +78,7 @@ export function promptPassword() {
  */
 export function createSession() {
   const token = randomBytes(32).toString('hex');
-  getDb().prepare('INSERT OR REPLACE INTO sessions (token, expires_at) VALUES (?, ?)').run(token, Date.now() + SESSION_TTL);
+  sessions.set(token, { expiresAt: Date.now() + SESSION_TTL });
   return token;
 }
 
@@ -109,12 +97,12 @@ function parseCookie(cookieHeader) {
 export function authMiddleware(req, res, next) {
   const token = parseCookie(req.headers.cookie);
   if (token) {
-    const session = getDb().prepare('SELECT expires_at FROM sessions WHERE token = ?').get(token);
-    if (session && session.expires_at > Date.now()) {
+    const session = sessions.get(token);
+    if (session && session.expiresAt > Date.now()) {
       return next();
     }
     // Expired — clean up
-    getDb().prepare('DELETE FROM sessions WHERE token = ?').run(token);
+    sessions.delete(token);
   }
   return res.status(401).json({ error: 'Unauthorized' });
 }
@@ -138,7 +126,7 @@ export function loginHandler(req, res) {
 export function logoutHandler(req, res) {
   const token = parseCookie(req.headers.cookie);
   if (token) {
-    getDb().prepare('DELETE FROM sessions WHERE token = ?').run(token);
+    sessions.delete(token);
   }
   res.setHeader('Set-Cookie', 'kb_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0');
   return res.json({ ok: true });
@@ -150,11 +138,11 @@ export function logoutHandler(req, res) {
 export function checkAuthHandler(req, res) {
   const token = parseCookie(req.headers.cookie);
   if (token) {
-    const session = getDb().prepare('SELECT expires_at FROM sessions WHERE token = ?').get(token);
-    if (session && session.expires_at > Date.now()) {
+    const session = sessions.get(token);
+    if (session && session.expiresAt > Date.now()) {
       return res.json({ authenticated: true });
     }
-    getDb().prepare('DELETE FROM sessions WHERE token = ?').run(token);
+    sessions.delete(token);
   }
   return res.json({ authenticated: false });
 }

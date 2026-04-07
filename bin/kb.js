@@ -2,12 +2,7 @@
 // bin/kb.js — CLI entry point
 // Commands: start, stop, mcp, register, ingest <path>, search <query>, status, setup
 
-import { config } from 'dotenv';
-import { fileURLToPath } from 'url';
-import { dirname, resolve } from 'path';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-config({ path: resolve(__dirname, '..', '.env') });
+import '../src/paths.js'; // loads .env from ~/.knowledge-base/.env
 
 const command = process.argv[2];
 const args = process.argv.slice(3);
