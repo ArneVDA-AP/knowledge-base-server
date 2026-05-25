@@ -9,7 +9,6 @@ import { captureYouTube } from './capture/youtube.js';
 import { captureWeb } from './capture/web.js';
 import { captureSession, captureFix } from './capture/terminal.js';
 import { hybridSearch } from './embeddings/search.js';
-import { formatYamlTags } from './utils/frontmatter.js';
 import { getRecentNotes, generateSynthesisPrompt } from './synthesis/weekly-review.js';
 import { processNewClippings } from './classify/processor.js';
 import { reviewDestructiveAction } from './safety/review.js';
