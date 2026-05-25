@@ -8,6 +8,7 @@
 import { getDb, getAllVaultPaths } from '../db.js';
 import { indexVault } from '../vault/indexer.js';
 import { mkdirSync, writeFileSync, existsSync } from 'fs';
+import { formatYamlTags } from '../utils/frontmatter.js';
 import { join, dirname } from 'path';
 import { formatYamlTags } from '../utils/frontmatter.js';
 
