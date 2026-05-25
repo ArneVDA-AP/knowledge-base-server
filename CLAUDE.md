@@ -118,6 +118,7 @@ All runtime state lives outside the repo:
 | `BETTER_AUTH_URL` | OAuth issuer URL (for remote deployment) |
 | `CLASSIFY_MODEL` | Claude model for AI classification (default: claude-haiku-4-5-20251001) |
 | `KB_CORS_ORIGINS` | Comma-separated extra CORS origins |
+| `CLAUDE_PATH` | Full path to `claude` CLI binary (Windows: set to `claude.cmd` path if spawn fails with ENOENT) |
 
 ### Important constraints
 - **Pure ESM** (`"type": "module"` in package.json) — all imports must use `.js` extensions
@@ -126,3 +127,18 @@ All runtime state lives outside the repo:
 - The embedding model (`all-MiniLM-L6-v2`) loads lazily with a 60s timeout and a mutex to prevent concurrent loads
 - `src/server.js` registers the Better Auth handler **before** `express.json()` — order matters
 - The SPA fallback route (`app.get('*', ...)`) must remain the last route in `server.js`
+- **Wildcard CORS** (`Access-Control-Allow-Origin: *`) is set as the first middleware in `server.js` so the Firefox extension (`moz-extension://`) can reach the REST API — keep it before all other routes
+- **Windows spawn**: `src/utils/claude.js` uses `shell: process.platform === 'win32'` so Node.js can resolve `claude.cmd` npm globals on Windows without ENOENT
+
+### Firefox extension companion
+The browser extension lives at `../claude-sessions-ext/` (sibling directory, **not** inside this repo). It captures Claude.ai session metadata, syncs to Kaiba via the REST API, and generates AI summaries using the `session-status` profile.
+
+Key extension → server API endpoints:
+- `GET /api/v1/health` — connectivity check (no auth)
+- `POST /api/v1/ingest` — first-time session sync
+- `PUT /api/v1/documents/:id` — re-sync (invalidates summary)
+- `POST /api/v1/documents/:id/summarize?profile=session-status` — AI summary via claude CLI
+- `GET /api/v1/documents?type=session&source=claude-web-ui:%` — pull on sidebar open
+- `GET /api/v1/search?q=…&type=session` — KB search from sidebar
+
+Extension install: `about:debugging` → This Firefox → Load Temporary Add-on → select `manifest.json`.
