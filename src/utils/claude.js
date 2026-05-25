@@ -13,6 +13,8 @@ export function runClaude(prompt, { model, timeout = 60000 } = {}) {
       env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: 'cli' },
       timeout,
       stdio: ['pipe', 'pipe', 'pipe'],
+      // Windows npm globals are .cmd files; shell:true lets cmd.exe resolve them
+      shell: process.platform === 'win32',
     });
 
     let stdout = '';
