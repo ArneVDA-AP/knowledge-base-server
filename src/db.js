@@ -92,6 +92,9 @@ function initSchema(db) {
   if (!docCols.includes('content_hash')) {
     db.prepare('ALTER TABLE documents ADD COLUMN content_hash TEXT').run();
   }
+  if (!docCols.includes('summary')) {
+    db.prepare('ALTER TABLE documents ADD COLUMN summary TEXT').run();
+  }
   // Create unique index after migration (column is guaranteed to exist)
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_hash
     ON documents(content_hash) WHERE content_hash IS NOT NULL;`);
@@ -257,8 +260,14 @@ export function searchDocuments(query, limit = 20) {
   return results;
 }
 
-export function listDocuments({ type, tag, limit = 50, offset = 0 } = {}) {
-  let sql = 'SELECT id, title, doc_type, tags, file_size, source, created_at, updated_at FROM documents';
+export function updateDocumentSummary(id, summary) {
+  return getDb().prepare(
+    'UPDATE documents SET summary = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+  ).run(summary, id);
+}
+
+export function listDocuments({ type, tag, source, limit = 50, offset = 0 } = {}) {
+  let sql = 'SELECT id, title, doc_type, tags, file_size, source, summary, created_at, updated_at FROM documents';
   const conditions = [];
   const params = [];
 
@@ -269,6 +278,10 @@ export function listDocuments({ type, tag, limit = 50, offset = 0 } = {}) {
   if (tag) {
     conditions.push("tags LIKE '%' || ? || '%'");
     params.push(tag);
+  }
+  if (source) {
+    conditions.push('source LIKE ?');
+    params.push(source);
   }
 
   if (conditions.length > 0) {

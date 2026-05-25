@@ -11,6 +11,8 @@ import {
   getStats,
   getDb,
   deleteDocument,
+  updateDocumentFull,
+  updateDocumentSummary,
 } from '../db.js';
 import { ingestText } from '../ingest.js';
 
@@ -153,7 +155,7 @@ router.get('/context', async (req, res) => {
 
 // GET /documents — list documents
 router.get('/documents', (req, res) => {
-  const { type, tag } = req.query;
+  const { type, tag, source } = req.query;
   let limit = parseInt(req.query.limit, 10) || 50;
   let offset = parseInt(req.query.offset, 10) || 0;
   if (limit > 200) limit = 200;
@@ -162,6 +164,7 @@ router.get('/documents', (req, res) => {
     const documents = listDocuments({
       type: type || undefined,
       tag: tag || undefined,
+      source: source || undefined,
       limit,
       offset,
     });
@@ -205,6 +208,66 @@ router.delete('/documents/:id', (req, res) => {
       try { unlinkSync(filePath); } catch {}
     }
     res.json({ deleted: true, id, title: doc.title, doc_type: doc.doc_type });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /documents/:id — update an existing document
+router.put('/documents/:id', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.status(400).json({ error: 'Invalid document id' });
+
+  try {
+    const existing = getDocument(id);
+    if (!existing) return res.status(404).json({ error: 'Document not found' });
+
+    const { title, content, tags, doc_type, source } = req.body ?? {};
+    const merged = {
+      title: title ?? existing.title,
+      content: content ?? existing.content,
+      tags: tags ?? existing.tags,
+      doc_type: doc_type ?? existing.doc_type,
+      source: source ?? existing.source,
+      file_path: existing.file_path,
+      file_size: content ? Buffer.byteLength(content, 'utf8') : existing.file_size,
+    };
+    updateDocumentFull(id, merged);
+
+    if (content && content !== existing.content) {
+      updateDocumentSummary(id, null);
+    }
+
+    res.json({ id, ...merged });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /documents/:id/summarize — on-demand summarization
+router.post('/documents/:id/summarize', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.status(400).json({ error: 'Invalid document id' });
+
+  const profile = req.query.profile ?? 'default';
+  const force = req.query.force === 'true';
+
+  try {
+    const doc = getDocument(id);
+    if (!doc) return res.status(404).json({ error: 'Document not found' });
+
+    if (doc.summary && !force) {
+      return res.json({ id, summary: doc.summary, profile, cached: true });
+    }
+
+    const { summarizeNote } = await import('../classify/summarizer.js');
+    const result = await summarizeNote(doc.title, doc.content, { profile });
+    if (!result.success) {
+      return res.status(500).json({ error: 'summarize_failed', detail: result.error });
+    }
+
+    updateDocumentSummary(id, result.summary);
+    res.json({ id, summary: result.summary, profile, cached: false });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

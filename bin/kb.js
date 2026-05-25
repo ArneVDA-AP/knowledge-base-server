@@ -37,12 +37,15 @@ const commands = {
   },
   summarize: () => {
     const dryRun = args.includes('--dry-run');
+    const force = args.includes('--force');
     const limitFlag = args.find(a => a.startsWith('--limit='));
     const limit = limitFlag ? parseInt(limitFlag.split('=')[1]) : 0;
+    const profile = args.find(a => a.startsWith('--profile='))?.split('=')[1] ?? 'default';
+    const type = args.find(a => a.startsWith('--type='))?.split('=')[1];
     return import('../src/classify/summarizer.js').then(async m => {
       const vaultPath = process.env.OBSIDIAN_VAULT_PATH;
       if (!vaultPath) { console.error('OBSIDIAN_VAULT_PATH not set'); process.exit(1); }
-      const result = await m.summarizeUnsummarized(vaultPath, { dryRun, limit });
+      const result = await m.summarizeUnsummarized(vaultPath, { dryRun, limit, type, profile, force });
       console.log(`\nSummarized: ${result.summarized}/${result.total} notes`);
       if (result.errors) console.log(`Errors: ${result.errors}`);
       if (dryRun) console.log('(dry run — no changes written)');

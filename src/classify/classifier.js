@@ -1,7 +1,4 @@
-import { spawn } from 'child_process';
-
-const CLAUDE_PATH = process.env.CLAUDE_PATH || 'claude';
-const CLASSIFY_MODEL = process.env.CLASSIFY_MODEL || 'claude-haiku-4-5-20251001';
+import { runClaude } from '../utils/claude.js';
 
 const CLASSIFY_PROMPT = `You are a knowledge classifier. Given a note's content and metadata, classify it for an AI knowledge base.
 
@@ -25,36 +22,6 @@ Classification guidelines:
 - "source": raw reference material, bookmarks, clippings that don't fit other types
 - Tags should be specific and reusable (not one-off descriptions)
 - Summary should help an AI agent decide whether to read the full note`;
-
-function runClaude(prompt) {
-  return new Promise((resolve, reject) => {
-    const proc = spawn(CLAUDE_PATH, [
-      '-p', '--model', CLASSIFY_MODEL,
-      '--output-format', 'json',
-      '--max-turns', '1',
-    ], {
-      env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: 'cli' },
-      timeout: 60000,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-
-    let stdout = '';
-    let stderr = '';
-
-    proc.stdout.on('data', d => { stdout += d; });
-    proc.stderr.on('data', d => { stderr += d; });
-
-    proc.on('close', code => {
-      if (code !== 0) return reject(new Error(`claude exited ${code}: ${stderr}`));
-      resolve(stdout);
-    });
-
-    proc.on('error', reject);
-
-    proc.stdin.write(prompt);
-    proc.stdin.end();
-  });
-}
 
 export async function classifyNote(title, content, sourcePath) {
   const prompt = `${CLASSIFY_PROMPT}
