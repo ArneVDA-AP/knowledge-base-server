@@ -54,33 +54,55 @@ const commands = {
   consolidate: () => {
     const dryRun = args.includes('--dry-run');
     const project = args.find(a => a.startsWith('--project='))?.split('=')[1];
-    return import('../src/consolidate.js').then(async m => {
-      if (args.includes('--episodics')) {
-        // CLS "sleep" pass: generalise stored episodic memories into semantic ones.
-        const result = await m.consolidateEpisodics({ dryRun, project });
-        console.log(JSON.stringify(result, null, 2));
-        console.log(`\nConsolidate episodics: ${result.written} semantic written, ${result.demoted} episodics demoted of ${result.episodics} considered${dryRun ? ' (dry run)' : ''}`);
-        return;
+    return import('../src/memory/store.js').then(async M => {
+      if (args.includes('--from-transcript')) {
+        // Auto-SAVE half of the spine: the Stop hook pipes its JSON on stdin; read transcript_path,
+        // extract the session text, consolidate into memories. Best-effort — never fails the hook.
+        const { extractTranscriptText } = await import('../src/memory/spine.js');
+        const { readFileSync, existsSync } = await import('fs');
+        let tpath; try { tpath = JSON.parse(readFileSync(0, 'utf-8')).transcript_path; } catch { /* no hook input */ }
+        if (!tpath || !existsSync(tpath)) process.exit(0);
+        const text = extractTranscriptText(readFileSync(tpath, 'utf-8'));
+        if (text.trim()) { try { const r = await M.consolidate(text, { project, dryRun }); console.error(`[kaiba] consolidated ${r.written} memories`); } catch { /* swallow */ } }
+        process.exit(0);
       }
       const { readFileSync } = await import('fs');
       const fileArg = args.find(a => !a.startsWith('--'));
       let text = '';
-      try {
-        text = fileArg ? readFileSync(fileArg, 'utf-8') : readFileSync(0, 'utf-8'); // file or stdin
-      } catch (e) {
-        console.error(`Could not read input: ${e.message}`); process.exit(1);
-      }
+      try { text = fileArg ? readFileSync(fileArg, 'utf-8') : readFileSync(0, 'utf-8'); }
+      catch (e) { console.error(`Could not read input: ${e.message}`); process.exit(1); }
       if (!text.trim()) { console.error('No input. Pass a file path or pipe session text via stdin.'); process.exit(1); }
-      const result = await m.consolidate(text, { dryRun, project });
+      const result = await M.consolidate(text, { dryRun, project });
       console.log(JSON.stringify(result, null, 2));
-      console.log(`\nConsolidate: ${result.written} written, ${result.skipped} skipped of ${result.extracted} extracted${dryRun ? ' (dry run — nothing written)' : ''}`);
+      console.log(`\nConsolidate: ${result.written} written, ${result.skipped} skipped of ${result.extracted} extracted${dryRun ? ' (dry run)' : ''}`);
+    });
+  },
+  brief: () => {
+    const project = args.find(a => a.startsWith('--project='))?.split('=')[1];
+    return import('../src/memory/store.js').then(async M => {
+      if (args.includes('--hook')) {
+        const { briefHookOutput } = await import('../src/memory/spine.js');
+        process.stdout.write(briefHookOutput({ project }));
+        return;
+      }
+      process.stdout.write((M.briefMarkdown({ project }) || '(Kaiba: no memories yet)') + '\n');
+    });
+  },
+  spine: () => {
+    const sub = args.find(a => !a.startsWith('--')) || 'status';
+    const settingsPath = args.find(a => a.startsWith('--settings='))?.split('=')[1];
+    return import('../src/memory/spine.js').then(m => {
+      if (sub === 'install') console.log(JSON.stringify(m.installSpine({ settingsPath }), null, 2));
+      else if (sub === 'uninstall') console.log(JSON.stringify(m.uninstallSpine({ settingsPath }), null, 2));
+      else if (sub === 'print') console.log(m.installSpine({ settingsPath, print: true }).preview);
+      else console.log(JSON.stringify(m.spineStatus({ settingsPath }), null, 2));
     });
   },
   'memory-export': () => {
     const project = args.find(a => a.startsWith('--project='))?.split('=')[1];
     const fileArg = args.find(a => !a.startsWith('--'));
-    return import('../src/db.js').then(async m => {
-      const ndjson = m.exportMemoriesNDJSON({ project });
+    return import('../src/memory/store.js').then(async M => {
+      const ndjson = M.exportNDJSON({ project });
       const n = ndjson ? ndjson.split('\n').filter(Boolean).length : 0;
       if (fileArg) {
         const { writeFileSync } = await import('fs');
@@ -93,13 +115,21 @@ const commands = {
   },
   'memory-import': () => {
     const fileArg = args.find(a => !a.startsWith('--'));
-    return import('../src/db.js').then(async m => {
+    return import('../src/memory/store.js').then(async M => {
       const { readFileSync } = await import('fs');
       let ndjson = '';
       try { ndjson = fileArg ? readFileSync(fileArg, 'utf-8') : readFileSync(0, 'utf-8'); }
       catch (e) { console.error(`Could not read input: ${e.message}`); process.exit(1); }
-      const res = m.importMemories(ndjson);
-      console.log(`Imported ${res.imported}, skipped ${res.skipped} (duplicates/invalid) of ${res.total}`);
+      const res = M.importNDJSON(ndjson);
+      console.log(`Imported ${res.imported}, skipped ${res.skipped} (duplicates/invalid)`);
+    });
+  },
+  'migrate-memories': () => {
+    // One-time lift of the old documents-based memories into the first-class `memories` entity.
+    return import('../src/memory/store.js').then(M => {
+      const r = M.migrateFromDocuments();
+      console.log(JSON.stringify(r, null, 2));
+      console.log(`\nMigrated ${r.migrated} memories, skipped ${r.skipped} (duplicates/empty) of ${r.total}.`);
     });
   },
   setup:    () => import('../src/cli/setup.js').then(m => m.setup(args)),
@@ -136,10 +166,12 @@ Commands:
   vault reindex      Reindex Obsidian vault
   classify           Auto-classify new clippings/inbox notes (--dry-run to preview)
   summarize          Add AI summaries to docs without them (--dry-run, --limit=N)
-  consolidate [file] Extract durable memories from a session (file or stdin; --dry-run, --project=)
-  consolidate --episodics  CLS pass: generalise stored episodic memories into semantic ones (--dry-run)
-  memory-export [file] Export bridge memories as NDJSON (--project= to scope; stdout if no file)
-  memory-import <file> Import memories from NDJSON (dedupes on content; file or stdin)
+  brief              Print the session-start memory brief (--hook = SessionStart hook JSON; --project=)
+  spine <cmd>        Wire the memory spine into Claude Code: install | status | print | uninstall
+  consolidate [file] Distil a session into durable memories (file/stdin; --dry-run, --project=)
+  memory-export [file] Export memories as NDJSON (--project= to scope; stdout if no file)
+  memory-import <file> Import memories from NDJSON (dedupes on content; re-enters review queue)
+  migrate-memories   One-time: lift old documents-based memories into the memories table
   capture-x [path]   Capture X/Twitter bookmarks to vault
   setup              Interactive setup wizard (--auto for agent mode)
 `);

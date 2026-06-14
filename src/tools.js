@@ -1,8 +1,9 @@
 import { z } from 'zod';
 import { writeFileSync, mkdirSync, existsSync, unlinkSync } from 'fs';
 import { join } from 'path';
-import { searchDocuments, listDocuments, getDocument, getStats, getDb, deleteDocument,
-  rememberMemory, recallMemories, recordMemoryOutcome, supersedeMemory, listPendingMemories, reviewMemory, getSessionBrief, findConflict, recallTraced } from './db.js';
+import { searchDocuments, listDocuments, getDocument, getStats, getDb, deleteDocument } from './db.js';
+// Memory ops live in the first-principles store (docs/memory-bridge/07). db.js owns only the documents domain now.
+import { remember, recall, recordOutcome, supersede, listPending, review, brief, consolidate } from './memory/store.js';
 import { ingestText } from './ingest.js';
 import { formatYamlTags } from './utils/frontmatter.js';
 import { indexVault } from './vault/indexer.js';
@@ -453,29 +454,25 @@ export function getToolDefinitions() {
       },
     },
 
-    // --- Two-way memory bridge (Claude <-> User shared memory) ---
+    // --- The shared brain: memory bridge (Claude <-> User), backed by src/memory/store.js ---
     {
       name: 'kb_remember',
-      description: 'Write a memory to the shared Claude<->User memory bridge. Use this to persist a durable learning, decision, preference, or fact — WITH its reasoning (the "why"), so it transfers to new situations rather than being misapplied. Agent-written memories enter a review queue and start at "inferred" confidence until verified. Prefer this over kb_ingest for knowledge that should compound across sessions.',
+      description: 'Write a memory to the shared Claude<->User brain. Persist a durable learning, decision, preference, prohibition, or fact — WITH its reasoning (the "why"), so it transfers to new situations instead of being misapplied. Agent-written memories enter a review queue at "inferred" confidence (agents can never self-declare "verified") until the user accepts them. Prefer this over kb_ingest for knowledge that should compound across sessions.',
       schema: {
-        title: z.string().describe('Short memory title'),
-        content: z.string().describe('The memory itself (the what)'),
-        reasoning: z.string().optional().describe('The WHY behind it — what makes it true and when it applies. Strongly recommended: bare facts get misapplied.'),
-        type: z.string().optional().describe('Memory type: fact, decision, preference, lesson, prohibition, etc. (default: memory)'),
-        importance: z.number().optional().describe('0..1 importance; high-importance memories stay salient even when unread (default 0.5)'),
-        confidence: z.enum(['verified', 'asserted', 'inferred', 'unverified']).optional().describe('verified = checked against ground truth; inferred = best guess (agent default)'),
-        tags: z.string().optional().describe('Comma-separated tags'),
+        content: z.string().describe('The memory itself — the durable fact/decision/lesson/preference (1-3 sentences)'),
+        reasoning: z.string().optional().describe('The WHY — what makes it true and when it applies. Strongly recommended: bare facts get misapplied.'),
+        kind: z.enum(['episodic', 'semantic', 'procedural']).optional().describe('semantic = durable fact/decision (default); episodic = a specific event; procedural = a how-to/skill'),
+        importance: z.number().optional().describe('0..1; high-importance memories stay salient even when unread (default 0.5)'),
+        confidence: z.enum(['asserted', 'inferred', 'unverified']).optional().describe('inferred = best guess (agent default); asserted = stated with grounds'),
         project: z.string().optional().describe('Project scope'),
-        deps: z.string().optional().describe('JSON object of declared inputs this memory depends on (e.g. {"file":"x","version":"v1"}) for staleness detection'),
       },
-      handler: async ({ title, content, reasoning, type, importance, confidence, tags, project, deps }) => {
+      handler: async ({ content, reasoning, kind, importance, confidence, project }) => {
         try {
-          let depsObj; if (deps) { try { depsObj = JSON.parse(deps); } catch { /* ignore malformed deps */ } }
-          // Provenance is hardcoded 'agent' — an MCP/REST caller cannot forge 'user' (which would bypass
-          // review). User-authored memories come only from the dashboard (cookie auth). rememberMemory
-          // also caps agent confidence at 'asserted'.
-          const doc = rememberMemory({ title, content, reasoning, doc_type: type, importance, confidence, tags, project, created_by: 'agent', deps: depsObj });
-          return { content: [{ type: 'text', text: JSON.stringify(doc, null, 2) }] };
+          // Provenance is hardcoded 'agent' — an MCP caller cannot forge 'user' (which would bypass review).
+          // User-authored memories come only from the dashboard (cookie auth). store.remember also caps
+          // agent confidence below 'verified'.
+          const m = remember({ kind, content, reasoning, importance, confidence, created_by: 'agent', project, source: { origin: 'mcp' } });
+          return { content: [{ type: 'text', text: JSON.stringify(m, null, 2) }] };
         } catch (err) {
           return { content: [{ type: 'text', text: `Error: ${err.message}` }], isError: true };
         }
@@ -484,23 +481,18 @@ export function getToolDefinitions() {
 
     {
       name: 'kb_recall',
-      description: 'Recall memories from the shared memory bridge, ranked by salience (relevance × recency × importance × confidence × outcome). Returns trust signals — who wrote it (user/agent), confidence, importance, outcome, and a stale flag — so you know how much to trust each one before acting. Recalling a memory strengthens it ("pays rent"). Use this at the start of work to load what is already known about a topic.',
+      description: 'Recall memories from the shared brain, ranked by salience (relevance × recency × importance × confidence × outcome). Returns trust signals — who wrote it (user/agent), confidence, importance, outcome — so you know how much to trust each one before acting. Recalling a memory strengthens it ("pays rent"). Use this at the start of work to load what is already known about a topic.',
       schema: {
         query: z.string().optional().describe('Topic/question to recall about (omit for the most-salient recent memories)'),
-        limit: z.number().optional().default(10),
+        limit: z.number().optional().default(8),
         project: z.string().optional().describe('Filter by project'),
-        type: z.string().optional().describe('Filter by memory type'),
+        kind: z.enum(['episodic', 'semantic', 'procedural']).optional().describe('Filter by memory kind'),
         includeSuperseded: z.boolean().optional().default(false).describe('Include superseded (demoted) memories'),
-        deps: z.string().optional().describe('Current declared inputs (JSON) to check stored memories against for staleness'),
-        temperature: z.number().optional().describe('0 (default) = deterministic top-k; >0 samples by salience so near-forgotten memories occasionally resurface'),
-        seed: z.number().optional().describe('RNG seed making a stochastic (temperature>0) recall exactly reproducible'),
-        diversity: z.number().optional().describe('0 (default) = pure salience; 0<λ<1 = MMR diversity (complementary memories, not paraphrases)'),
       },
-      handler: async ({ query, limit, project, type, includeSuperseded, deps, temperature, seed, diversity }) => {
+      handler: async ({ query, limit, project, kind, includeSuperseded }) => {
         try {
-          let depsObj; if (deps) { try { depsObj = JSON.parse(deps); } catch { /* ignore malformed deps */ } }
-          const results = await recallMemories(query || '', { limit, project, type, includeSuperseded, deps: depsObj, temperature, seed, diversity });
-          const header = `Recalled ${results.length} memories, salience-ranked. Trust signals included (created_by, confidence, outcome_score, stale).`;
+          const results = await recall(query || '', { limit, project, kind, includeSuperseded });
+          const header = `Recalled ${results.length} memories, salience-ranked. Trust signals included (created_by, confidence, importance, outcome).`;
           return { content: [{ type: 'text', text: header + '\n\n' + JSON.stringify(results, null, 2) }] };
         } catch (err) {
           return { content: [{ type: 'text', text: `Error: ${err.message}` }], isError: true };
@@ -510,14 +502,14 @@ export function getToolDefinitions() {
 
     {
       name: 'kb_memory_outcome',
-      description: 'Record that acting on a memory helped or burned you. A burn lowers its confidence one notch and flags it for review (never deletes it). This is how the memory learns which advice keeps paying off and which has gone stale — turning outcomes into calibrated trust over time.',
+      description: 'Record that acting on a memory helped or burned you. A burn lowers its confidence one notch (never deletes it). This is how the brain learns which advice keeps paying off and which has gone stale — turning outcomes into calibrated trust over time.',
       schema: {
-        id: z.number().describe('Memory document ID'),
+        id: z.number().describe('Memory ID'),
         outcome: z.enum(['helped', 'burned']).describe('Did acting on this memory help or burn you?'),
       },
       handler: async ({ id, outcome }) => {
         try {
-          const r = recordMemoryOutcome(id, outcome);
+          const r = recordOutcome(id, outcome);
           if (!r) return { content: [{ type: 'text', text: `Error: memory ${id} not found` }], isError: true };
           return { content: [{ type: 'text', text: JSON.stringify(r, null, 2) }] };
         } catch (err) {
@@ -536,7 +528,7 @@ export function getToolDefinitions() {
       },
       handler: async ({ old_id, new_id, reason }) => {
         try {
-          const r = supersedeMemory(old_id, new_id, reason);
+          const r = supersede(old_id, new_id, reason);
           if (!r) return { content: [{ type: 'text', text: `Error: memory ${old_id} not found` }], isError: true };
           return { content: [{ type: 'text', text: JSON.stringify(r, null, 2) }] };
         } catch (err) {
@@ -547,7 +539,7 @@ export function getToolDefinitions() {
 
     {
       name: 'kb_memory_review',
-      description: 'Human-audit loop for the memory bridge (admin-only): list agent-written memories awaiting review, or accept/reject one. This is the propose/dispose contract — Claude proposes memories about intent, the user disposes. Rejected memories drop out of recall.',
+      description: 'Human-audit loop for the brain (admin-only): list agent-written memories awaiting review, or accept/reject one. This is the propose/dispose contract — Claude proposes memories, the user disposes. Rejected memories drop out of recall.',
       schema: {
         action: z.enum(['list', 'accept', 'reject']).describe('list pending memories, or accept/reject one'),
         id: z.number().optional().describe('Memory ID (required for accept/reject)'),
@@ -556,10 +548,10 @@ export function getToolDefinitions() {
       handler: async ({ action, id, limit }) => {
         try {
           if (action === 'list') {
-            return { content: [{ type: 'text', text: JSON.stringify(listPendingMemories({ limit }), null, 2) }] };
+            return { content: [{ type: 'text', text: JSON.stringify(listPending({ limit }), null, 2) }] };
           }
           if (id == null) return { content: [{ type: 'text', text: 'Error: id required for accept/reject' }], isError: true };
-          const r = reviewMemory(id, action);
+          const r = review(id, action);
           if (!r) return { content: [{ type: 'text', text: `Error: memory ${id} not found` }], isError: true };
           return { content: [{ type: 'text', text: JSON.stringify(r, null, 2) }] };
         } catch (err) {
@@ -570,7 +562,7 @@ export function getToolDefinitions() {
 
     {
       name: 'kb_consolidate',
-      description: 'Session-close consolidation (continuous learning): extract durable, reusable memories (facts/decisions/lessons/preferences/prohibitions, each WITH its reasoning) from a work session, dedupe them semantically against existing memories, and write the survivors as agent memories pending review. Call this at the END of a significant session. Admin-only.',
+      description: 'Session-close consolidation (continuous learning): extract durable, reusable memories (facts/decisions/lessons/preferences/prohibitions, each WITH its reasoning) from a work session, dedupe them, and write the survivors as agent memories pending review. Call this at the END of a significant session. Admin-only. (The spine also runs this automatically via the Stop hook.)',
       schema: {
         text: z.string().describe('The session transcript or notes to consolidate into memories'),
         dry_run: z.boolean().optional().default(false).describe('Preview the extracted memories without writing'),
@@ -578,7 +570,6 @@ export function getToolDefinitions() {
       },
       handler: async ({ text, dry_run, project }) => {
         try {
-          const { consolidate } = await import('./consolidate.js');
           const result = await consolidate(text, { dryRun: dry_run, project });
           return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
         } catch (err) {
@@ -588,53 +579,18 @@ export function getToolDefinitions() {
     },
 
     {
-      name: 'kb_memory_conflicts',
-      description: "Surface a memory's closest semantic neighbor within a 'consistency band' (close enough to be about the same thing, but not a duplicate) so a human can check whether the two AGREE or CONFLICT. This does NOT decide contradiction — embeddings can't reliably separate agreement from contradiction, so it routes the pair to human judgment. Read-only; returns the neighbor or nothing.",
-      schema: {
-        id: z.number().describe('Memory ID to check for a close-but-distinct neighbor'),
-      },
-      handler: async ({ id }) => {
-        try {
-          const c = await findConflict(id);
-          return { content: [{ type: 'text', text: c ? JSON.stringify(c, null, 2) : 'No close-but-distinct neighbor found (no likely conflict).' }] };
-        } catch (err) {
-          return { content: [{ type: 'text', text: `Error: ${err.message}` }], isError: true };
-        }
-      },
-    },
-
-    {
-      name: 'kb_workspace',
-      description: 'Transparent recall: returns the salience-ranked memories PLUS the internal "blackboard" — each specialised step (Librarian fetch, Salience Router ignition: broadcast vs suppress) logged as an auditable {agent, doc_id, score, vote, reasoning} row. This is the single pane of glass into Kaiba\'s internal reasoning; the human can see (and override) why each memory was surfaced.',
-      schema: {
-        query: z.string().optional().describe('Topic/question to recall about'),
-        limit: z.number().optional().default(10),
-        temperature: z.number().optional().describe('0 = deterministic; >0 = salience-sampled'),
-        seed: z.number().optional().describe('RNG seed for reproducible stochastic recall'),
-      },
-      handler: async ({ query, limit, temperature, seed }) => {
-        try {
-          const out = await recallTraced(query || '', { limit, temperature, seed });
-          return { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }] };
-        } catch (err) {
-          return { content: [{ type: 'text', text: `Error: ${err.message}` }], isError: true };
-        }
-      },
-    },
-
-    {
       name: 'kb_session_brief',
-      description: 'Session-start briefing from the shared memory: a small always-load CORE (highest-importance accepted memories — prohibitions, key decisions) plus DUE memories scheduled for spaced re-surfacing. Call this at the START of a session to load what matters without scanning everything. Surfacing strengthens memories and reschedules their next re-surfacing (spacing — the validated durability lever).',
+      description: 'Session-start briefing from the shared brain: a small CORE (highest-importance accepted memories — prohibitions, key decisions, preferences) plus RECENTLY-USED memories and a count pending your review. Call this at the START of a session to load what matters without scanning everything. (The spine injects this automatically via the SessionStart hook.)',
       schema: {
-        core: z.number().optional().default(5).describe('Max CORE (always-load) memories'),
-        due: z.number().optional().default(7).describe('Max DUE (spaced re-surfacing) memories'),
+        core: z.number().optional().default(7).describe('Max CORE (load-bearing) memories'),
+        recent: z.number().optional().default(5).describe('Max recently-used memories'),
         project: z.string().optional().describe('Project scope'),
       },
-      handler: async ({ core, due, project }) => {
+      handler: async ({ core, recent, project }) => {
         try {
-          const brief = getSessionBrief({ core, due, project });
-          const header = `Session brief: ${brief.core.length} CORE + ${brief.due.length} DUE memories (surfacing strengthens + reschedules them).`;
-          return { content: [{ type: 'text', text: header + '\n\n' + JSON.stringify(brief, null, 2) }] };
+          const b = brief({ core, recent, project });
+          const header = `Session brief: ${b.core.length} CORE + ${b.recent.length} recent memories, ${b.pending} pending review.`;
+          return { content: [{ type: 'text', text: header + '\n\n' + JSON.stringify(b, null, 2) }] };
         } catch (err) {
           return { content: [{ type: 'text', text: `Error: ${err.message}` }], isError: true };
         }
