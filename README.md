@@ -2,9 +2,9 @@
 
 **Make every AI agent you use smarter.**
 
-A persistent memory system that captures, classifies, synthesizes, and retrieves knowledge for AI agents. One brain, multiple agents, compounding intelligence. Production-proven with 200+ documents, three agents (Claude, Codex, Gemini), and daily use.
+A persistent memory system (nicknamed **Kaiba**) that captures, classifies, synthesizes, and retrieves knowledge for AI agents. One brain, multiple agents, compounding intelligence.
 
-This is not just a search engine. It is an intelligence pipeline that turns raw information into refined, retrievable knowledge -- and gets smarter every session.
+This is not just a search engine. It is an intelligence pipeline that turns raw information into refined, retrievable knowledge -- and gets smarter every session. **This fork adds a two-way Claude ⇄ User memory bridge** on top of the document KB (see below).
 
 ---
 
@@ -142,7 +142,8 @@ The loop in detail:
 
 **Core**
 - SQLite FTS5 full-text search with BM25 ranking and highlighted snippets
-- Semantic search via local HuggingFace embeddings (Xenova/all-MiniLM-L6-v2)
+- Semantic/vector search via local HuggingFace embeddings (Xenova/all-MiniLM-L6-v2) — no API keys needed
+- Hybrid search mode (`kb_search_smart`) combining keyword + semantic for conceptual queries
 - Web dashboard for browsing, searching, and managing documents
 - CLI for all operations (`kb start`, `kb search`, `kb ingest`, `kb setup`)
 - One-command MCP registration (`kb register`)
@@ -183,6 +184,35 @@ The loop in detail:
 
 ---
 
+## Two-Way Memory Bridge (Claude ⇄ User) — *this fork*
+
+Beyond the document KB above, this fork adds a **bidirectional shared-memory layer**: a place where Claude
+and the user each contribute what they're authoritative about — so the agent operates like a colleague who
+has been on the project for months. The full design and the adversarially-validated research behind it live
+in [`docs/memory-bridge/`](docs/memory-bridge/).
+
+- **Provenance + trust on every memory** — `created_by` (user/agent), `confidence`
+  (verified/asserted/inferred/unverified), attached `reasoning` (the *why*, not just the fact), and a
+  staleness signal. Agents cannot forge `user` provenance or self-declare `verified`.
+- **Propose / dispose** — agents *propose* memories (`review_status='pending'`); the user *disposes* via a
+  review queue (dashboard **Memory** tab or `kb_memory_review`).
+- **Salience-ranked recall that compounds** — recall ranks by relevance × recency × importance × confidence
+  × outcome; recalling a memory strengthens it ("pays rent"); stale advice is **demoted, not deleted**
+  (supersession stays queryable). Record outcomes with `kb_memory_outcome` to calibrate trust over time.
+- **Continuous learning** — `kb consolidate` extracts durable memories from a session;
+  `kb consolidate --episodics` generalises episodic → semantic (CLS-style) with provenance.
+- **Brain-inspired memory model** (*brain-inspired, not brain-proven* — see the research docs): layered
+  memory systems (working/episodic/semantic/procedural), a two-strength model (durable `storage_strength`
+  vs live retrievability, FSRS-style spacing), reward-prediction-error outcome updates, a transparent
+  internal **agent workspace** blackboard (`kb_workspace`), and **bounded non-determinism** in recall
+  (`KB_RECALL_TEMPERATURE` / `KB_RECALL_DIVERSITY`, deterministic by default).
+- **Portability** — `kb memory-export` / `kb memory-import` (NDJSON, provenance-preserving).
+
+The memory layer is **opt-in and back-compatible**: defaults reproduce the original deterministic behaviour,
+and the design docs keep validated *and* contested claims visible.
+
+---
+
 ## Quickstart
 
 ### Prerequisites
@@ -193,7 +223,7 @@ The loop in detail:
 ### Install
 
 ```bash
-git clone https://github.com/willynikes2/knowledge-base-server.git
+git clone https://github.com/ArneVDA-AP/knowledge-base-server.git
 cd knowledge-base-server
 npm install
 npm link
@@ -247,7 +277,7 @@ Claude will use `kb_search` and return results from your accumulated knowledge.
 | **Updates** | `git pull` | Automatic |
 | **Multi-device sync** | You configure | Built-in |
 | **Backups** | You manage | Automatic |
-| **All 16 MCP tools** | Yes | Yes |
+| **All 26 MCP tools** | Yes | Yes |
 | **Obsidian integration** | Yes | Yes |
 | **REST API + ChatGPT** | Yes | Yes |
 
@@ -261,7 +291,7 @@ First 500 early adopters get Pro at $12/mo forever (normally $25): [memstalker.c
 
 ## MCP Tools
 
-All 16 tools available via MCP (stdio and HTTP):
+All 26 tools available via MCP (stdio and HTTP) — 17 base tools plus 9 for the memory bridge:
 
 | Tool | Description |
 |------|-------------|
@@ -281,6 +311,17 @@ All 16 tools available via MCP (stdio and HTTP):
 | `kb_capture_youtube` | Capture a YouTube transcript with metadata |
 | `kb_vault_status` | Show vault indexing stats by type and project |
 | `kb_safety_check` | Review a destructive action against KB history |
+| `kb_delete` | Delete a document by ID (admin) |
+| **Memory bridge** | **(this fork)** |
+| `kb_remember` | Write a memory to the shared Claude⇄User bridge, with reasoning |
+| `kb_recall` | Salience-ranked memory recall with trust signals (provenance, confidence, stale) |
+| `kb_memory_outcome` | Record that a memory helped or burned — calibrates trust over time |
+| `kb_supersede` | Demote-don't-delete: mark a memory superseded by a newer one |
+| `kb_memory_review` | Human review queue: list/accept/reject agent-proposed memories (admin) |
+| `kb_consolidate` | Consolidate a session into durable memories (admin) |
+| `kb_session_brief` | Session-start briefing: always-load core + spaced re-surfacing |
+| `kb_memory_conflicts` | Surface a memory's closest neighbor for human consistency review |
+| `kb_workspace` | Transparent traced recall — exposes the internal agent blackboard |
 
 ---
 
@@ -299,6 +340,9 @@ kb classify           Auto-classify unprocessed vault notes
 kb summarize          Generate AI summaries for unsummarized notes
 kb capture-x          Ingest X/Twitter bookmarks from export
 kb safety-check       Review a planned action against KB history
+kb consolidate        Consolidate a session into durable memories (--episodics for the CLS pass)
+kb memory-export      Export bridge memories as NDJSON (--project= to scope)
+kb memory-import      Import memories from NDJSON (dedupes; re-enters the review queue)
 ```
 
 ---
@@ -418,7 +462,7 @@ Use kb_capture_fix to record:
 kb register    # Writes to ~/.claude.json automatically
 ```
 
-All 16 MCP tools become available in Claude Code immediately.
+All 26 MCP tools become available in Claude Code immediately.
 
 ### Codex / Other MCP Agents
 
@@ -523,6 +567,8 @@ These are the actual development patterns used to build this system. Open source
 | `BETTER_AUTH_SECRET` | No | -- | OAuth token signing secret |
 | `BETTER_AUTH_URL` | No | -- | OAuth issuer URL for remote access |
 | `CLASSIFY_MODEL` | No | claude-haiku-4-5-20251001 | Model for AI classification |
+| `KB_RECALL_TEMPERATURE` | No | 0 | Memory recall stochasticity (0 = deterministic top-k; >0 samples by salience) |
+| `KB_RECALL_DIVERSITY` | No | 0 | MMR diversity λ for recall (0 = pure salience; 0<λ<1 = complementary results) |
 
 ---
 
@@ -563,7 +609,7 @@ AI is only as good as its context. This is the context layer.
 - [ ] Plugin system for custom ingestion sources
 - [ ] Ollama integration for fully local AI classification
 - [ ] WebSocket real-time updates on the dashboard
-- [ ] Export/import for knowledge base migration
+- [x] Export/import for knowledge base migration -- `kb memory-export` / `kb memory-import`
 
 ---
 

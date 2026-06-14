@@ -158,6 +158,8 @@ function buildEnvContent(cfg) {
 // ---------------------------------------------------------------------------
 
 function installSystemd() {
+  // Resolve kb binary path — use the actual resolved path, not just 'kb',
+  // because systemd PATH may not include npm bin directories
   let kbBin;
   try {
     kbBin = execFileSync('which', ['kb'], { encoding: 'utf-8' }).trim();

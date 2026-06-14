@@ -5,6 +5,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Knowledge Base</title>
   <link rel="stylesheet" href="/styles.css">
+  <style>
+    .muted { color: var(--muted, #888); font-weight: normal; font-size: 0.85em; }
+    .memory-card { border: 1px solid var(--border, #ddd); border-radius: 8px; padding: 12px 14px; margin-bottom: 10px; }
+    .memory-card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+    .memory-badges { display: flex; gap: 6px; flex-wrap: wrap; }
+    .memory-content { margin: 8px 0 4px; }
+    .memory-reasoning { margin: 4px 0; font-style: italic; color: var(--muted, #888); }
+    .memory-actions { display: flex; gap: 8px; margin-top: 8px; }
+    .prov-user { background: #2563eb; color: #fff; }
+    .prov-agent { background: #7c3aed; color: #fff; }
+    .prov-system { background: #6b7280; color: #fff; }
+  </style>
 </head>
 <body>
   <!-- Login Screen -->
@@ -33,6 +45,7 @@
       <ul class="nav-links">
         <li><a href="#" data-section="upload" class="active">Upload</a></li>
         <li><a href="#" data-section="documents">Documents</a></li>
+        <li><a href="#" data-section="memory">Memory</a></li>
         <li><a href="#" data-section="settings">Settings</a></li>
       </ul>
       <div class="sidebar-footer">
@@ -80,6 +93,18 @@
           </select>
         </div>
         <div id="doc-list"></div>
+      </section>
+
+      <!-- Memory Section (two-way bridge: you <-> Claude) -->
+      <section id="section-memory" class="section" hidden>
+        <h2>Memory <span class="muted">— shared brain (you &#8646; Claude)</span></h2>
+        <div class="search-bar">
+          <input type="text" id="memory-recall-input" placeholder="Recall memories by meaning…">
+          <button id="memory-recall-btn" class="btn-sm">Recall</button>
+        </div>
+        <div id="memory-recall-results"></div>
+        <h3>Review queue <span class="muted">— Claude proposes, you dispose (flagged shown first)</span></h3>
+        <div id="memory-queue"></div>
       </section>
 
       <!-- Document Detail Modal -->

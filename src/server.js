@@ -64,6 +64,16 @@ export async function start() {
 
   const __dirname = dirname(fileURLToPath(import.meta.url));
 
+  // --- Open CORS for browser extension and direct API clients ---
+  // Must be before all routes. moz-extension:// origins are dynamic so we use wildcard.
+  app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Headers', 'X-API-Key, Authorization, Content-Type');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    if (req.method === 'OPTIONS') return res.sendStatus(204);
+    next();
+  });
+
   // --- CORS for external API/MCP access ---
   // Merge hardcoded AI platform origins with any custom origins from env
   const aiPlatformOrigins = [

@@ -3,6 +3,7 @@ import { join } from 'path';
 import { parseVaultNote } from '../vault/parser.js';
 import { formatYamlTags } from '../utils/frontmatter.js';
 import { CLASSIFY_PROMPT, PROMOTE_PROMPT } from './prompts.js';
+import { formatYamlTags } from '../utils/frontmatter.js';
 
 // Promotion destinations by classification
 const DEST_MAP = {

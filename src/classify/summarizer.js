@@ -1,11 +1,7 @@
-import { spawn } from 'child_process';
 import { readFileSync, writeFileSync } from 'fs';
-import { join } from 'path';
 import matter from 'gray-matter';
 import { scanVault } from '../vault/indexer.js';
-
-const CLAUDE_PATH = process.env.CLAUDE_PATH || 'claude';
-const CLASSIFY_MODEL = process.env.CLASSIFY_MODEL || 'claude-haiku-4-5-20251001';
+import { runClaude } from '../utils/claude.js';
 
 const SUMMARIZE_PROMPT = `You are a knowledge base summarizer. Given a note, return ONLY valid JSON (no fencing):
 {
@@ -15,34 +11,27 @@ const SUMMARIZE_PROMPT = `You are a knowledge base summarizer. Given a note, ret
 
 Be specific and actionable. The summary should help an AI agent decide if it needs to read the full document without actually reading it. Focus on WHAT information is available, not just the topic.`;
 
-function runClaude(prompt) {
-  return new Promise((resolve, reject) => {
-    const proc = spawn(CLAUDE_PATH, [
-      '-p', '--model', CLASSIFY_MODEL,
-      '--output-format', 'json',
-      '--max-turns', '1',
-    ], {
-      env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: 'cli' },
-      timeout: 60000,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+const SESSION_STATUS_PROMPT = `Analyze this session document and produce a status summary.
+Focus on what matters for resuming work in this session.
 
-    let stdout = '';
-    let stderr = '';
-    proc.stdout.on('data', d => { stdout += d; });
-    proc.stderr.on('data', d => { stderr += d; });
-    proc.on('close', code => {
-      if (code !== 0) return reject(new Error(`claude exited ${code}: ${stderr.slice(0, 200)}`));
-      resolve(stdout);
-    });
-    proc.on('error', reject);
-    proc.stdin.write(prompt);
-    proc.stdin.end();
-  });
-}
+Format as exactly 4 lines:
+WORKING ON: <what was being worked on, 1 sentence>
+STOPPED AT: <where the session stopped, current state>
+NEXT STEP: <most concrete next action>
+BLOCKER: <identified blocker, or 'none'>
 
-export async function summarizeNote(title, content) {
-  const prompt = `${SUMMARIZE_PROMPT}
+Each line under 100 characters. Be specific, not generic.`;
+
+const PROFILES = {
+  default: SUMMARIZE_PROMPT,
+  'session-status': SESSION_STATUS_PROMPT,
+};
+
+export async function summarizeNote(title, content, { profile = 'default' } = {}) {
+  const promptTemplate = PROFILES[profile];
+  if (!promptTemplate) throw new Error(`Unknown summarization profile: ${profile}`);
+
+  const prompt = `${promptTemplate}
 
 Title: ${title}
 
@@ -52,6 +41,11 @@ ${content.slice(0, 3000)}`;
     const stdout = await runClaude(prompt);
     const response = JSON.parse(stdout);
     const resultText = response.result || '';
+
+    if (profile === 'session-status') {
+      return { success: true, summary: resultText.trim(), key_topics: [] };
+    }
+
     const jsonStr = resultText.replace(/^```json?\n?/, '').replace(/\n?```$/, '').trim();
     return { success: true, ...JSON.parse(jsonStr) };
   } catch (err) {
@@ -59,7 +53,7 @@ ${content.slice(0, 3000)}`;
   }
 }
 
-export async function summarizeUnsummarized(vaultPath, { dryRun = false, limit = 0 } = {}) {
+export async function summarizeUnsummarized(vaultPath, { dryRun = false, limit = 0, type, profile = 'default', force = false } = {}) {
   const allFiles = scanVault(vaultPath);
   const delay = (ms) => new Promise(r => setTimeout(r, ms));
   const needsSummary = [];
@@ -69,7 +63,8 @@ export async function summarizeUnsummarized(vaultPath, { dryRun = false, limit =
       const raw = readFileSync(filePath, 'utf-8');
       if (!raw.trim()) continue;
       const { data: fm, content: body } = matter(raw);
-      if (fm.summary) continue; // already has summary
+      if (type && fm.type !== type) continue;
+      if (fm.summary && !force) continue;
       if (body.trim().length < 100) continue; // too short to summarize
       needsSummary.push({ filePath, fm, body, rel: filePath.replace(vaultPath + '/', '') });
     } catch { continue; }
@@ -84,7 +79,7 @@ export async function summarizeUnsummarized(vaultPath, { dryRun = false, limit =
     const title = note.fm.title || note.rel.split('/').pop().replace(/\.md$/, '');
     console.log(`Summarizing: ${note.rel}`);
 
-    const result = await summarizeNote(title, note.body);
+    const result = await summarizeNote(title, note.body, { profile });
     if (!result.success) {
       console.log(`  Failed: ${result.error}`);
       results.push({ path: note.rel, status: 'error' });
