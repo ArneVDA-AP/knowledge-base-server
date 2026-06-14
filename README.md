@@ -86,7 +86,7 @@ agents cannot forge `user` provenance or self-declare `verified`; those come onl
 accept or reject from the dashboard **Memory** tab or via `kb_memory_review`. The human stays in the loop on
 what's authoritative, which the research found to be load-bearing, not optional.
 
-**Recall that compounds.** Retrieval ranks by one salience formula — relevance × (recency + importance) ×
+**Recall that compounds.** Retrieval ranks by one salience formula — relevance × (0.4·recency + 0.6·importance) ×
 confidence × outcome — using semantic similarity (local embeddings) with a full-text fallback. Recency is an
 Ebbinghaus-style half-life that differs by kind (episodic decays fastest, procedural slowest), computed *live*
 at recall so nothing decaying is ever stored. Recalling a memory **strengthens** it ("pays rent"); stale advice
