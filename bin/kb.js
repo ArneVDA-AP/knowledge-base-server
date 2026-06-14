@@ -51,6 +51,57 @@ const commands = {
       if (dryRun) console.log('(dry run — no changes written)');
     });
   },
+  consolidate: () => {
+    const dryRun = args.includes('--dry-run');
+    const project = args.find(a => a.startsWith('--project='))?.split('=')[1];
+    return import('../src/consolidate.js').then(async m => {
+      if (args.includes('--episodics')) {
+        // CLS "sleep" pass: generalise stored episodic memories into semantic ones.
+        const result = await m.consolidateEpisodics({ dryRun, project });
+        console.log(JSON.stringify(result, null, 2));
+        console.log(`\nConsolidate episodics: ${result.written} semantic written, ${result.demoted} episodics demoted of ${result.episodics} considered${dryRun ? ' (dry run)' : ''}`);
+        return;
+      }
+      const { readFileSync } = await import('fs');
+      const fileArg = args.find(a => !a.startsWith('--'));
+      let text = '';
+      try {
+        text = fileArg ? readFileSync(fileArg, 'utf-8') : readFileSync(0, 'utf-8'); // file or stdin
+      } catch (e) {
+        console.error(`Could not read input: ${e.message}`); process.exit(1);
+      }
+      if (!text.trim()) { console.error('No input. Pass a file path or pipe session text via stdin.'); process.exit(1); }
+      const result = await m.consolidate(text, { dryRun, project });
+      console.log(JSON.stringify(result, null, 2));
+      console.log(`\nConsolidate: ${result.written} written, ${result.skipped} skipped of ${result.extracted} extracted${dryRun ? ' (dry run — nothing written)' : ''}`);
+    });
+  },
+  'memory-export': () => {
+    const project = args.find(a => a.startsWith('--project='))?.split('=')[1];
+    const fileArg = args.find(a => !a.startsWith('--'));
+    return import('../src/db.js').then(async m => {
+      const ndjson = m.exportMemoriesNDJSON({ project });
+      const n = ndjson ? ndjson.split('\n').filter(Boolean).length : 0;
+      if (fileArg) {
+        const { writeFileSync } = await import('fs');
+        writeFileSync(fileArg, ndjson);
+        console.log(`Exported ${n} memories to ${fileArg}`);
+      } else {
+        console.log(ndjson);
+      }
+    });
+  },
+  'memory-import': () => {
+    const fileArg = args.find(a => !a.startsWith('--'));
+    return import('../src/db.js').then(async m => {
+      const { readFileSync } = await import('fs');
+      let ndjson = '';
+      try { ndjson = fileArg ? readFileSync(fileArg, 'utf-8') : readFileSync(0, 'utf-8'); }
+      catch (e) { console.error(`Could not read input: ${e.message}`); process.exit(1); }
+      const res = m.importMemories(ndjson);
+      console.log(`Imported ${res.imported}, skipped ${res.skipped} (duplicates/invalid) of ${res.total}`);
+    });
+  },
   setup:    () => import('../src/cli/setup.js').then(m => m.setup(args)),
   'safety-check': () => {
     const action = args.join(' ');
@@ -85,6 +136,10 @@ Commands:
   vault reindex      Reindex Obsidian vault
   classify           Auto-classify new clippings/inbox notes (--dry-run to preview)
   summarize          Add AI summaries to docs without them (--dry-run, --limit=N)
+  consolidate [file] Extract durable memories from a session (file or stdin; --dry-run, --project=)
+  consolidate --episodics  CLS pass: generalise stored episodic memories into semantic ones (--dry-run)
+  memory-export [file] Export bridge memories as NDJSON (--project= to scope; stdout if no file)
+  memory-import <file> Import memories from NDJSON (dedupes on content; file or stdin)
   capture-x [path]   Capture X/Twitter bookmarks to vault
   setup              Interactive setup wizard (--auto for agent mode)
 `);

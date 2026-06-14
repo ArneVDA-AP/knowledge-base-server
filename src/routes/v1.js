@@ -13,6 +13,13 @@ import {
   deleteDocument,
   updateDocumentFull,
   updateDocumentSummary,
+  rememberMemory,
+  recallMemories,
+  recordMemoryOutcome,
+  supersedeMemory,
+  listPendingMemories,
+  reviewMemory,
+  getSessionBrief,
 } from '../db.js';
 import { ingestText } from '../ingest.js';
 
@@ -353,6 +360,106 @@ router.post('/capture/web', async (req, res) => {
     const vaultPath = process.env.OBSIDIAN_VAULT_PATH || DEFAULT_VAULT_PATH;
     const result = captureWeb({ title, url, content, tags, project }, vaultPath);
     res.status(201).json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Memory bridge (agent side) ────────────────────────────────────────────────
+// API-key / OAuth callers are agents, so provenance is fixed to 'agent' here
+// (decided at the call site — the shared tool handler cannot infer transport).
+
+// POST /memory — agent writes a memory (enters the review queue at 'inferred')
+router.post('/memory', (req, res) => {
+  const { title, content, reasoning, type, importance, confidence, tags, project, deps } = req.body || {};
+  if (!title || !content) {
+    return res.status(400).json({ error: 'Missing required fields: title, content' });
+  }
+  try {
+    const author_detail = req.apiService ? `api:${req.apiService}` : 'api';
+    const doc = rememberMemory({ title, content, reasoning, doc_type: type, importance, confidence, tags, project, created_by: 'agent', author_detail, deps });
+    res.status(201).json(doc);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /memory/recall — salience-ranked recall with trust signals (strengthens on recall)
+router.get('/memory/recall', async (req, res) => {
+  const { q, project, type } = req.query;
+  let limit = parseInt(req.query.limit, 10) || 10;
+  if (limit > 50) limit = 50;
+  const includeSuperseded = req.query.includeSuperseded === 'true';
+  let deps; if (req.query.deps) { try { deps = JSON.parse(req.query.deps); } catch { /* ignore */ } }
+  try {
+    res.json({ results: await recallMemories(q || '', { limit, project, type, includeSuperseded, deps }) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /memory/:id/outcome — record that a memory helped or burned
+router.post('/memory/:id/outcome', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.status(400).json({ error: 'Invalid memory id' });
+  const { outcome } = req.body || {};
+  if (!['helped', 'burned'].includes(outcome)) {
+    return res.status(400).json({ error: "outcome must be 'helped' or 'burned'" });
+  }
+  try {
+    const r = recordMemoryOutcome(id, outcome);
+    if (!r) return res.status(404).json({ error: 'Memory not found' });
+    res.json(r);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /memory/supersede — demote-don't-delete supersession
+router.post('/memory/supersede', (req, res) => {
+  const { old_id, new_id, reason } = req.body || {};
+  if (old_id == null) return res.status(400).json({ error: 'old_id required' });
+  try {
+    const r = supersedeMemory(old_id, new_id, reason);
+    if (!r) return res.status(404).json({ error: 'Memory not found' });
+    res.json(r);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /memory/brief — session-start briefing (CORE + DUE, spaced re-surfacing)
+router.get('/memory/brief', (req, res) => {
+  const core = parseInt(req.query.core, 10) || 5;
+  const due = parseInt(req.query.due, 10) || 7;
+  const { project } = req.query;
+  try {
+    res.json(getSessionBrief({ core, due, project }));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /memory/review — list agent memories pending review
+router.get('/memory/review', (req, res) => {
+  const limit = parseInt(req.query.limit, 10) || 50;
+  try {
+    res.json({ pending: listPendingMemories({ limit }) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /memory/review — accept/reject an agent memory (human audit loop)
+router.post('/memory/review', (req, res) => {
+  const { id, action } = req.body || {};
+  if (id == null || !['accept', 'reject'].includes(action)) {
+    return res.status(400).json({ error: "id and action ('accept'|'reject') required" });
+  }
+  try {
+    const r = reviewMemory(id, action);
+    if (!r) return res.status(404).json({ error: 'Memory not found' });
+    res.json(r);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

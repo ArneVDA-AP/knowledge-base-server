@@ -79,6 +79,7 @@ function showSection(name) {
   document.querySelectorAll('[data-section]').forEach(l => l.classList.toggle('active', l.dataset.section === name));
   if (name === 'documents') loadDocuments();
   if (name === 'settings') loadStats();
+  if (name === 'memory') { loadMemoryQueue(); recallMemoryAction(); }
 }
 
 // Logout
@@ -347,6 +348,139 @@ document.getElementById('password-form').addEventListener('submit', async (e) =>
   } else {
     showToast('Failed to update password', 'error');
   }
+});
+
+// --- Memory (two-way bridge) ---
+function memBadge(text, cls) {
+  const s = document.createElement('span');
+  s.className = 'tag-pill' + (cls ? ' ' + cls : '');
+  s.textContent = text;
+  return s;
+}
+
+function buildMemoryCard(m, opts) {
+  opts = opts || {};
+  const card = document.createElement('div');
+  card.className = 'memory-card';
+
+  const head = document.createElement('div');
+  head.className = 'memory-card-head';
+  const title = document.createElement('strong');
+  title.textContent = m.title || '(untitled)';
+  head.appendChild(title);
+
+  const badges = document.createElement('div');
+  badges.className = 'memory-badges';
+  badges.appendChild(memBadge(m.created_by || 'system', 'prov-' + (m.created_by || 'system')));
+  if (m.confidence) badges.appendChild(memBadge(m.confidence));
+  if (m.review_status && m.review_status !== 'none') badges.appendChild(memBadge(m.review_status, m.review_status === 'flagged' ? 'error' : ''));
+  if (typeof m.salience === 'number') badges.appendChild(memBadge('sal ' + m.salience));
+  if (m.stale) badges.appendChild(memBadge('stale', 'error'));
+  head.appendChild(badges);
+  card.appendChild(head);
+
+  const content = document.createElement('p');
+  content.className = 'memory-content';
+  content.textContent = m.content || '';
+  card.appendChild(content);
+
+  if (m.reasoning) {
+    const r = document.createElement('p');
+    r.className = 'memory-reasoning';
+    r.textContent = 'Why: ' + m.reasoning;
+    card.appendChild(r);
+  }
+
+  const actions = document.createElement('div');
+  actions.className = 'memory-actions';
+  if (opts.review) {
+    const accept = document.createElement('button');
+    accept.className = 'btn-sm';
+    accept.textContent = 'Accept';
+    accept.addEventListener('click', () => reviewMemoryAction(m.id, 'accept'));
+    const reject = document.createElement('button');
+    reject.className = 'btn-sm btn-danger';
+    reject.textContent = 'Reject';
+    reject.addEventListener('click', () => reviewMemoryAction(m.id, 'reject'));
+    actions.appendChild(accept);
+    actions.appendChild(reject);
+  }
+  if (opts.outcome) {
+    const helped = document.createElement('button');
+    helped.className = 'btn-sm';
+    helped.textContent = 'Helped';
+    helped.addEventListener('click', () => outcomeMemoryAction(m.id, 'helped'));
+    const burned = document.createElement('button');
+    burned.className = 'btn-sm btn-danger';
+    burned.textContent = 'Burned';
+    burned.addEventListener('click', () => outcomeMemoryAction(m.id, 'burned'));
+    actions.appendChild(helped);
+    actions.appendChild(burned);
+  }
+  card.appendChild(actions);
+  return card;
+}
+
+async function loadMemoryQueue() {
+  const res = await fetch('/api/memory/pending');
+  const data = await res.json();
+  const container = document.getElementById('memory-queue');
+  container.textContent = '';
+  const items = (data && data.pending) || [];
+  if (!items.length) {
+    const p = document.createElement('p');
+    p.className = 'empty';
+    p.textContent = 'Nothing to review — the queue is clear.';
+    container.appendChild(p);
+    return;
+  }
+  items.forEach(m => container.appendChild(buildMemoryCard(m, { review: true })));
+}
+
+async function reviewMemoryAction(id, action) {
+  await fetch('/api/memory/review', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: id, action: action }),
+  });
+  showToast('Memory ' + action + (action === 'reject' ? 'ed' : 'ed'), action === 'reject' ? 'error' : 'success');
+  loadMemoryQueue();
+}
+
+async function outcomeMemoryAction(id, outcome) {
+  await fetch('/api/memory/' + id + '/outcome', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ outcome: outcome }),
+  });
+  showToast('Recorded: ' + outcome, outcome === 'burned' ? 'error' : 'success');
+  recallMemoryAction();
+  loadMemoryQueue();
+}
+
+async function recallMemoryAction() {
+  const q = document.getElementById('memory-recall-input').value;
+  const params = new URLSearchParams();
+  if (q) params.set('q', q);
+  params.set('limit', '15');
+  const res = await fetch('/api/memory/recall?' + params);
+  const data = await res.json();
+  const container = document.getElementById('memory-recall-results');
+  container.textContent = '';
+  const items = (data && data.results) || [];
+  if (!items.length) {
+    const p = document.createElement('p');
+    p.className = 'empty';
+    p.textContent = q ? 'No memories recalled for that query.' : 'No memories yet.';
+    container.appendChild(p);
+    return;
+  }
+  items.forEach(m => container.appendChild(buildMemoryCard(m, { outcome: true })));
+}
+
+document.getElementById('memory-recall-btn').addEventListener('click', recallMemoryAction);
+document.getElementById('memory-recall-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') recallMemoryAction();
 });
 
 // --- Helpers ---
