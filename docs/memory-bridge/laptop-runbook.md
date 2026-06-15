@@ -74,6 +74,10 @@ KB_BRAIN_SYNC_DIR=<Drive>\kaiba-sync\brain
 - `KB_BRAIN_SYNC_DIR` — the shared brain dir where each machine drops its `kaiba-brain.<host>.ndjson`.
   (If unset, `kb memory-sync` defaults to `<homedir>\My Drive\kaiba-sync\brain` — set it explicitly so
   it's correct even if this laptop's Drive path is non-standard.)
+- `KB_MACHINE_ID` *(optional)* — the per-machine brain file is named from `os.hostname()`. If this laptop
+  and the desktop happen to share a hostname, their files collide (one overwrites the other in Drive and a
+  machine re-imports its own export). Only then, set a distinct `KB_MACHINE_ID=laptop` here so the files
+  stay separate (`kaiba-brain.laptop.ndjson`). Leave it unset if the hostnames already differ.
 
 Do **not** put `KB_PASSWORD` in any script — set it in `.env` or pass it on the `kb start` command line.
 
@@ -147,6 +151,7 @@ kb memory-sync               # pull every OTHER machine's brain file, then (re)w
 | `kb memory-sync` reports 0 machines / sync dir empty | The desktop hasn't pushed its brain yet. Run `kb memory-sync` on the **desktop** first (it writes `kaiba-brain.<desktop-host>.ndjson`), wait for Drive to upload it, then retry here. Verify `KB_BRAIN_SYNC_DIR` points at the real `<Drive>\kaiba-sync\brain`. |
 | `kb vault reindex` finds nothing | `OBSIDIAN_VAULT_PATH` still points at the **old local** path. Re-check `.env`; it must be the moved `<Drive>\kaiba-sync\vault` path. |
 | Drive path differs from the desktop's | Expected — never hardcode `C:\Users\Admin\My Drive`. Always derive from `%USERPROFILE%\My Drive` or set `<Drive>` explicitly. Set `KB_BRAIN_SYNC_DIR` and `OBSIDIAN_VAULT_PATH` to **this** laptop's real paths. |
+| Sync pulls 0 / a machine re-imports its own memories | Both machines resolve to the **same** `os.hostname()`, so they write the same `kaiba-brain.<host>.ndjson` and clobber each other. Set a distinct `KB_MACHINE_ID` (e.g. `laptop`) on one machine, then `kb memory-sync` again. Check the brain dir holds **two** differently-named files. |
 | Want to undo the move | The original vault is still in its old local folder (you didn't delete it). Point `OBSIDIAN_VAULT_PATH` back at it and `kb vault reindex`. Remove `kaiba-sync\vault` from Drive if abandoning sync. |
 | A memory you rejected reappears | It won't via `kb memory-sync` (rejection is terminal and propagates). If it came back, you likely used `kb memory-import` (untrusted, re-review) — reject it again; sync will keep it rejected from then on. |
 
