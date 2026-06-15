@@ -124,6 +124,16 @@ const commands = {
       console.log(`Imported ${res.imported}, skipped ${res.skipped} (duplicates/invalid)`);
     });
   },
+  'memory-sync': () => {
+    // Trusted cross-device merge via per-machine NDJSON files in a shared Drive dir (docs/memory-bridge/08).
+    const dir = args.find(a => a.startsWith('--dir='))?.split('=')[1];
+    const project = args.find(a => a.startsWith('--project='))?.split('=')[1];
+    const dryRun = args.includes('--dry-run');
+    return import('../src/memory/store.js').then(async M => {
+      const r = await M.syncMemories({ dir, project, dryRun });
+      console.log(`memory-sync [${r.machine}]: pulled ${r.pulledNew} new + ${r.pulledUpdated} updated from ${r.machines.length} peer(s)${r.machines.length ? ` [${r.machines.join(', ')}]` : ''}; ${dryRun ? 'would push' : 'pushed'} ${r.pushed} → ${r.dir}${dryRun ? '  (dry run — nothing written)' : ''}`);
+    });
+  },
   'migrate-memories': () => {
     // One-time lift of the old documents-based memories into the first-class `memories` entity.
     return import('../src/memory/store.js').then(M => {
@@ -171,6 +181,7 @@ Commands:
   consolidate [file] Distil a session into durable memories (file/stdin; --dry-run, --project=)
   memory-export [file] Export memories as NDJSON (--project= to scope; stdout if no file)
   memory-import <file> Import memories from NDJSON (dedupes on content; re-enters review queue)
+  memory-sync        Sync the brain across your machines via a shared Drive dir (--dir=, --dry-run, --project=)
   migrate-memories   One-time: lift old documents-based memories into the memories table
   capture-x [path]   Capture X/Twitter bookmarks to vault
   setup              Interactive setup wizard (--auto for agent mode)
