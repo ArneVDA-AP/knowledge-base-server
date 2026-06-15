@@ -190,7 +190,8 @@ function initSchema(db) {
       outcome INTEGER NOT NULL DEFAULT 0,               -- net helped(+) / burned(-)
       use_count INTEGER NOT NULL DEFAULT 0,
       last_used_at DATETIME,
-      superseded_by INTEGER,                            -- demote-don't-delete
+      superseded_by INTEGER,                            -- demote-don't-delete (LOCAL row id)
+      superseded_by_hash TEXT,                          -- PORTABLE supersession target (content_hash) for cross-device sync (docs/08)
       supersession_reason TEXT,
       review_status TEXT NOT NULL DEFAULT 'pending',    -- pending | accepted | rejected
       content_hash TEXT,
@@ -216,6 +217,16 @@ function initSchema(db) {
       INSERT INTO memories_fts(rowid, content, reasoning) VALUES (new.id, new.content, new.reasoning);
     END;
   `);
+
+  // Migration: cross-device sync (docs/memory-bridge/08). `superseded_by` is a LOCAL row id and is
+  // meaningless on another machine; `superseded_by_hash` carries the content_hash of the superseding
+  // memory so a supersede made on one machine travels (and stays sticky) to another. No backfill UPDATE
+  // here — exportSyncRecords() resolves the hash on the fly for pre-existing rows, which avoids firing
+  // the memories_fts AFTER UPDATE trigger during schema init (same caution as the documents migrations).
+  const memEntityCols = db.prepare('PRAGMA table_info(memories)').all().map(c => c.name);
+  if (!memEntityCols.includes('superseded_by_hash')) {
+    db.prepare('ALTER TABLE memories ADD COLUMN superseded_by_hash TEXT').run();
+  }
 }
 
 export { initSchema, getDb };

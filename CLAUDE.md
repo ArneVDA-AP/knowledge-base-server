@@ -50,6 +50,10 @@ kb migrate-memories
 kb memory-export brain.ndjson --project=kaiba
 kb memory-import brain.ndjson
 
+# Sync the brain across YOUR machines (trusted convergent merge via a shared Drive dir; docs/08)
+kb memory-sync --dry-run                       # preview; reads KB_BRAIN_SYNC_DIR (or --dir=)
+kb memory-sync                                 # pull peers' kaiba-brain.<host>.ndjson, push your own
+
 # Reindex Obsidian vault
 kb vault reindex
 
@@ -140,6 +144,15 @@ First-principles rebuild contract: `docs/memory-bridge/07-spine-rebuild.md` (his
   `supersede` (demote-don't-delete), `recordOutcome` (burn lowers confidence one notch), `consolidate` (LLM
   extract → dedup → pending; `extractResultText` tolerates the `claude` CLI's stream-array envelope),
   `migrateFromDocuments`, `exportNDJSON`/`importNDJSON` (untrusted import → forced pending, confidence capped).
+- **Cross-device sync (`store.js`, docs/memory-bridge/08)**: `kb memory-sync` merges the brain across a user's
+  machines via per-machine NDJSON files (`kaiba-brain.<host>.ndjson`) in a shared Drive dir (`KB_BRAIN_SYNC_DIR`).
+  **Never sync `kb.db`** (SQLite over cloud-sync corrupts) — only the NDJSON wire format crosses Drive; each
+  machine indexes/keeps its own db. This is the **trusted** same-owner path (preserves status/confidence/
+  provenance), distinct from `importNDJSON`. Identity is `content_hash` (local `id` is not portable); supersession
+  travels via the portable, sticky `superseded_by_hash` column (a local-id `superseded_by` would be meaningless
+  on another machine, and the default `superseded_by IS NULL` export would silently drop corrected rows). The
+  merge (`mergeMemoryRecords`, pure/tested) is a per-field join-semilattice → convergent regardless of sync order
+  (review_status max, confidence min/cautious, importance·use_count max, outcome caution-biased, created_by user>agent).
 - **One salience formula** (computed live; nothing decaying is stored):
   `relevance × (0.4·recency + 0.6·importance) × confidenceWeight × outcomeMultiplier`; `recency =
   exp(-ln2·Δh/halfLife[kind])` (episodic 24h, semantic 720h, procedural 4320h).
