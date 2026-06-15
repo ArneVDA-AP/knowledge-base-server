@@ -11,7 +11,7 @@
       1. Resolves this laptop's Google Drive mount (-DriveRoot or auto-detect %USERPROFILE%\My Drive).
       2. Creates <Drive>\kaiba-sync\vault and <Drive>\kaiba-sync\brain.
       3. Makes a safety copy of the current vault, then COPIES it into the Drive vault folder.
-         It NEVER deletes the original — it leaves it in place; you just stop using it.
+         It NEVER deletes the original -- it leaves it in place; you just stop using it.
       4. Merges OBSIDIAN_VAULT_PATH and KB_BRAIN_SYNC_DIR into ~\.knowledge-base\.env
          WITHOUT clobbering any other keys (existing values are updated in place, others untouched).
       5. Runs `kb vault reindex` and `kb memory-sync --dry-run`.
@@ -24,7 +24,7 @@
 
 .PARAMETER DriveRoot
     Optional. This laptop's Google Drive mount root. Defaults to %USERPROFILE%\My Drive if it exists;
-    otherwise you are prompted. Do NOT hardcode the desktop's C:\Users\Admin\My Drive — it may differ here.
+    otherwise you are prompted. Do NOT hardcode the desktop's C:\Users\Admin\My Drive -- it may differ here.
 
 .PARAMETER DryRun
     Optional. Show every action without changing anything (no copy, no .env write, no reindex).
@@ -38,7 +38,7 @@
 
 .NOTES
     Run AFTER the other machine has pushed its brain at least once (kb memory-sync there).
-    kb.db stays local in ~\.knowledge-base — this script never touches it.
+    kb.db stays local in ~\.knowledge-base -- this script never touches it.
 #>
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
@@ -70,7 +70,7 @@ function Good([string] $Message)  { Write-Host "  [ok] $Message" -ForegroundColo
 function Warn2([string] $Message) { Write-Host "  [!]  $Message" -ForegroundColor Yellow }
 
 Write-Host "Kaiba laptop sync setup" -ForegroundColor White
-if ($DryRun) { Warn2 "DRY RUN — no files or settings will be changed." }
+if ($DryRun) { Warn2 "DRY RUN -- no files or settings will be changed." }
 
 # ---------------------------------------------------------------------------
 # 1. Resolve and validate the current vault
@@ -139,7 +139,7 @@ foreach ($d in @($SyncRoot, $DriveVault, $DriveBrain)) {
 # ---------------------------------------------------------------------------
 Step "Copying the vault into Drive (safety copy first; original left in place)"
 if ($alreadyInDrive) {
-    Good "Vault already lives inside the Drive sync folder — skipping copy (idempotent)."
+    Good "Vault already lives inside the Drive sync folder -- skipping copy (idempotent)."
 } else {
     # 4a. Safety copy of the original, outside Drive.
     $backup = Join-Path $env:USERPROFILE ("kaiba-vault-backup-{0}" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
@@ -220,14 +220,14 @@ if ($PSCmdlet.ShouldProcess($envPath, "Write merged .env")) {
     Info "  OBSIDIAN_VAULT_PATH=$DriveVault"
     Info "  KB_BRAIN_SYNC_DIR=$DriveBrain"
 }
-Info "Note: KB_PASSWORD is never written by this script — set it in .env or pass it to 'kb start'."
+Info "Note: KB_PASSWORD is never written by this script -- set it in .env or pass it to 'kb start'."
 
 # ---------------------------------------------------------------------------
 # 6. Reindex + first sync dry-run
 # ---------------------------------------------------------------------------
 $kb = (Get-Command kb -ErrorAction SilentlyContinue)
 if (-not $kb) {
-    Warn2 "'kb' is not on PATH — skipping reindex and dry-run sync. Run them yourself after fixing PATH:"
+    Warn2 "'kb' is not on PATH -- skipping reindex and dry-run sync. Run them yourself after fixing PATH:"
     Info  "  kb vault reindex"
     Info  "  kb memory-sync --dry-run"
 } elseif ($DryRun) {
@@ -238,14 +238,14 @@ if (-not $kb) {
     Step "Rebuilding the local vault index"
     if ($PSCmdlet.ShouldProcess('kb vault reindex', 'Run')) {
         & kb vault reindex
-        if ($LASTEXITCODE -ne 0) { Warn2 "kb vault reindex exited with code $LASTEXITCODE — check OBSIDIAN_VAULT_PATH in .env." }
+        if ($LASTEXITCODE -ne 0) { Warn2 "kb vault reindex exited with code $LASTEXITCODE -- check OBSIDIAN_VAULT_PATH in .env." }
         else { Good "Reindexed from $DriveVault" }
     }
 
-    Step "First memory sync (dry run — writes nothing)"
+    Step "First memory sync (dry run -- writes nothing)"
     if ($PSCmdlet.ShouldProcess("kb memory-sync --dir=$DriveBrain --dry-run", 'Run')) {
         & kb memory-sync "--dir=$DriveBrain" --dry-run
-        if ($LASTEXITCODE -ne 0) { Warn2 "kb memory-sync --dry-run exited with code $LASTEXITCODE — confirm the other machine has pushed its brain into $DriveBrain." }
+        if ($LASTEXITCODE -ne 0) { Warn2 "kb memory-sync --dry-run exited with code $LASTEXITCODE -- confirm the other machine has pushed its brain into $DriveBrain." }
     }
 }
 
@@ -258,13 +258,13 @@ Write-Host @"
   2. If you haven't yet:   kb spine install        # session auto-load/save of the brain
   3. Review the dry-run counts above, then run the REAL sync:
          kb memory-sync
-     (Trusted merge — preserves status/confidence. Use this for ongoing sync.
+     (Trusted merge -- preserves status/confidence. Use this for ongoing sync.
       Use 'kb memory-import <file>' only for a one-off untrusted seed.)
   4. Verify:               kb brief   and   kb search "<a desktop-only term>"
   5. On the OTHER machine, run 'kb memory-sync' too; then both converge.
 
   Reminders:
-   - kb.db NEVER goes into Drive — only the vault and the NDJSON brain files do.
+   - kb.db NEVER goes into Drive -- only the vault and the NDJSON brain files do.
    - Your original vault is still at: $VaultPath  (delete only after verifying both machines converge).
    - Shared layout:  $DriveVault   and   $DriveBrain
 "@ -ForegroundColor Gray
