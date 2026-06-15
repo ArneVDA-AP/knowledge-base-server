@@ -13,14 +13,17 @@ import {
   deleteDocument,
   updateDocumentFull,
   updateDocumentSummary,
-  rememberMemory,
-  recallMemories,
-  recordMemoryOutcome,
-  supersedeMemory,
-  listPendingMemories,
-  reviewMemory,
-  getSessionBrief,
 } from '../db.js';
+// Memory ops come from the first-principles store (docs/memory-bridge/07), not the documents domain.
+import {
+  remember,
+  recall,
+  recordOutcome,
+  supersede,
+  listPending,
+  review,
+  brief,
+} from '../memory/store.js';
 import { ingestText } from '../ingest.js';
 
 const router = Router();
@@ -365,20 +368,20 @@ router.post('/capture/web', async (req, res) => {
   }
 });
 
-// ─── Memory bridge (agent side) ────────────────────────────────────────────────
+// ─── Shared brain: memory bridge (agent side) ──────────────────────────────────
 // API-key / OAuth callers are agents, so provenance is fixed to 'agent' here
-// (decided at the call site — the shared tool handler cannot infer transport).
+// (decided at the call site — the shared store cannot infer transport).
 
-// POST /memory — agent writes a memory (enters the review queue at 'inferred')
+// POST /memory — agent writes a memory (enters the review queue, capped below 'verified')
 router.post('/memory', (req, res) => {
-  const { title, content, reasoning, type, importance, confidence, tags, project, deps } = req.body || {};
-  if (!title || !content) {
-    return res.status(400).json({ error: 'Missing required fields: title, content' });
+  const { content, reasoning, kind, type, importance, confidence, project } = req.body || {};
+  if (!content) {
+    return res.status(400).json({ error: 'Missing required field: content' });
   }
   try {
-    const author_detail = req.apiService ? `api:${req.apiService}` : 'api';
-    const doc = rememberMemory({ title, content, reasoning, doc_type: type, importance, confidence, tags, project, created_by: 'agent', author_detail, deps });
-    res.status(201).json(doc);
+    const origin = req.apiService ? `api:${req.apiService}` : 'api';
+    const m = remember({ kind: kind || type, content, reasoning, importance, confidence, project, created_by: 'agent', source: { origin } });
+    res.status(201).json(m);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -386,13 +389,12 @@ router.post('/memory', (req, res) => {
 
 // GET /memory/recall — salience-ranked recall with trust signals (strengthens on recall)
 router.get('/memory/recall', async (req, res) => {
-  const { q, project, type } = req.query;
-  let limit = parseInt(req.query.limit, 10) || 10;
+  const { q, project, kind, type } = req.query;
+  let limit = parseInt(req.query.limit, 10) || 8;
   if (limit > 50) limit = 50;
   const includeSuperseded = req.query.includeSuperseded === 'true';
-  let deps; if (req.query.deps) { try { deps = JSON.parse(req.query.deps); } catch { /* ignore */ } }
   try {
-    res.json({ results: await recallMemories(q || '', { limit, project, type, includeSuperseded, deps }) });
+    res.json({ results: await recall(q || '', { limit, project, kind: kind || type, includeSuperseded }) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -407,7 +409,7 @@ router.post('/memory/:id/outcome', (req, res) => {
     return res.status(400).json({ error: "outcome must be 'helped' or 'burned'" });
   }
   try {
-    const r = recordMemoryOutcome(id, outcome);
+    const r = recordOutcome(id, outcome);
     if (!r) return res.status(404).json({ error: 'Memory not found' });
     res.json(r);
   } catch (err) {
@@ -420,7 +422,7 @@ router.post('/memory/supersede', (req, res) => {
   const { old_id, new_id, reason } = req.body || {};
   if (old_id == null) return res.status(400).json({ error: 'old_id required' });
   try {
-    const r = supersedeMemory(old_id, new_id, reason);
+    const r = supersede(old_id, new_id, reason);
     if (!r) return res.status(404).json({ error: 'Memory not found' });
     res.json(r);
   } catch (err) {
@@ -428,13 +430,13 @@ router.post('/memory/supersede', (req, res) => {
   }
 });
 
-// GET /memory/brief — session-start briefing (CORE + DUE, spaced re-surfacing)
+// GET /memory/brief — session-start load (CORE + recently-used + pending count)
 router.get('/memory/brief', (req, res) => {
-  const core = parseInt(req.query.core, 10) || 5;
-  const due = parseInt(req.query.due, 10) || 7;
+  const core = parseInt(req.query.core, 10) || 7;
+  const recent = parseInt(req.query.recent, 10) || 5;
   const { project } = req.query;
   try {
-    res.json(getSessionBrief({ core, due, project }));
+    res.json(brief({ core, recent, project }));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -444,7 +446,7 @@ router.get('/memory/brief', (req, res) => {
 router.get('/memory/review', (req, res) => {
   const limit = parseInt(req.query.limit, 10) || 50;
   try {
-    res.json({ pending: listPendingMemories({ limit }) });
+    res.json({ pending: listPending({ limit }) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -457,7 +459,7 @@ router.post('/memory/review', (req, res) => {
     return res.status(400).json({ error: "id and action ('accept'|'reject') required" });
   }
   try {
-    const r = reviewMemory(id, action);
+    const r = review(id, action);
     if (!r) return res.status(404).json({ error: 'Memory not found' });
     res.json(r);
   } catch (err) {

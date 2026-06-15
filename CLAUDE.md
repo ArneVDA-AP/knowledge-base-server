@@ -35,11 +35,18 @@ kb classify --dry-run
 # Add AI summaries to unsummarized docs (--limit=N to cap)
 kb summarize --limit=10
 
+# Install the memory spine: SessionStart auto-loads a brief, Stop auto-consolidates the transcript
+kb spine install        # status | print (preview) | uninstall
+kb brief                # print the session-start brief (--hook = SessionStart hook JSON)
+
 # Consolidate a work session into durable memories (continuous learning; file or stdin)
 kb consolidate session-notes.md --dry-run
 cat transcript.txt | kb consolidate --project=kaiba
 
-# Export / import the shared brain as NDJSON (provenance-preserving, dedupes on import)
+# One-time: lift legacy documents-based memories into the memories table (idempotent)
+kb migrate-memories
+
+# Export / import the shared brain as NDJSON (untrusted import re-enters review, dedupes on content)
 kb memory-export brain.ndjson --project=kaiba
 kb memory-import brain.ndjson
 
@@ -70,7 +77,7 @@ All runtime state lives outside the repo:
 - `kb.pid` — PID file for `kb stop`
 
 ### Entry points
-- `bin/kb.js` — CLI dispatcher; loads `.env` from repo root, routes to command modules
+- `bin/kb.js` — CLI dispatcher; loads `.env` from `~/.knowledge-base/.env` (via `src/paths.js`), routes to command modules
 - `src/server.js` — Express web server (dashboard + REST API + MCP HTTP)
 - `src/mcp.js` — MCP stdio server for AI agent integration
 
@@ -88,6 +95,8 @@ All runtime state lives outside the repo:
 
 ### Database layer (`src/db.js`)
 - Singleton `getDb()` — initializes lazily, runs schema migrations inline on first call
+- Owns the **documents/vault/search** domain + defines the `memories` schema; memory *ops* live in
+  `src/memory/store.js` (the old documents-bolted-on memory functions were cut in the rebuild — see `07`)
 - FTS5 virtual table `documents_fts` with BM25 ranking; title weight 10×, tags 5×, content 1×
 - Search strategy: AND-first for precision, OR fallback for recall
 - `vault_files` table tracks content hashes for incremental vault re-indexing
@@ -98,6 +107,8 @@ All runtime state lives outside the repo:
 | Module | Responsibility |
 |--------|---------------|
 | `src/ingest.js` | File → DB; duplicate detection by filename (`source` field) |
+| `src/memory/store.js` | The memory domain: `memories` entity, salience, recall, brief, review, consolidation |
+| `src/memory/spine.js` | Wires the SessionStart(brief)+Stop(consolidate) Claude Code hooks (the spine) |
 | `src/vault/indexer.js` | Obsidian vault incremental indexer (hash-based) |
 | `src/embeddings/embed.js` | Local HuggingFace `Xenova/all-MiniLM-L6-v2` embeddings |
 | `src/embeddings/search.js` | Hybrid FTS5 + cosine similarity search |
@@ -108,54 +119,46 @@ All runtime state lives outside the repo:
 | `src/safety/review.js` | Multi-model consensus check before destructive actions |
 | `src/paths.js` | Centralized path constants — always import paths from here |
 
-### Two-way memory bridge (Claude ⇄ User)
-Kaiba is a **bidirectional shared memory** between the user and Claude, not a one-way user tool.
-Full design + the adversarial validation it rests on: `docs/memory-bridge/` (`01-theory-validation.md`,
-`02-claude-perspective.md`, `03-shared-design.md`).
-- **Memories are documents** — bridge memories live in the `documents` table (reusing FTS5/embeddings),
-  distinguished by `created_by IN ('user','agent')`. Added columns: `created_by`, `author_detail`,
-  `confidence` (verified/asserted/inferred/unverified), `reasoning`, `verified_at`, `importance`,
-  `access_count`, `last_accessed_at`, `outcome_score`, `superseded_by`, `supersession_reason`,
-  `deps_hash`, `review_status`, `project`. Migration uses **constant defaults only** (SQLite forbids
-  non-constant defaults on `ADD COLUMN`); `insertDocument` coalesces in JS.
-- **MCP tools** (`src/tools.js`): `kb_remember`, `kb_recall`, `kb_memory_outcome`, `kb_supersede`,
-  `kb_memory_review` (admin), `kb_consolidate` (admin), `kb_session_brief` (CORE+DUE spaced re-surfacing),
-  `kb_memory_conflicts` (read-only closest-neighbor for human consistency review),
-  `kb_workspace` (transparent traced recall — logs each internal agent's vote to the `workspace` blackboard).
-  **REST**: agent side `/api/v1/memory/*` (`routes/v1.js`, `created_by=agent`), user side `/api/memory/*`
-  (`routes/api.js`, cookie auth, `created_by=user`).
-- **Brain-inspired architecture** (`docs/memory-bridge/05-brain-research.md`; "brain-inspired, not brain-proven"):
-  `memory_system` {working,episodic,semantic,procedural} with per-system salience weights (semantic = legacy
-  defaults; NULL reads as semantic); two-strength model (`storage_strength` stretches the half-life; FSRS
-  strengthen-on-recall); reward-prediction-error outcomes (`predicted_outcome`, precision-weighted downgrade);
-  CLS consolidation (`consolidateEpisodics` / `kb consolidate --episodics`) — generalises stored episodic
-  memories into semantic ones, linking `derived_from` and demoting sources via `consolidated_into`
-  (`markConsolidated`); unit-tested with an injectable extractor, real-LLM run uses the same `runClaude` as the
-  summarizer (verify on an authenticated machine); transparent `workspace` blackboard;
-  bounded non-determinism (`recallMemories` `temperature`/`seed`, Gumbel-top-k, **`T=0` = exact legacy top-k**,
-  env `KB_RECALL_TEMPERATURE`).
-- **Recall is semantic** (`recallMemories`, async): cosine over per-memory embeddings
-  (`Xenova/all-MiniLM-L6-v2`) with FTS rank-position fallback; memories embed on write
-  (best-effort) + `backfillMemoryEmbeddings()`. **Continuous learning**: `src/consolidate.js`
-  (`kb consolidate` / `kb_consolidate`) extracts durable memories from a session, dedupes via
-  `findSimilarMemory`, writes them agent/pending. Auto-trigger = opt-in Claude Code Stop hook.
-- **Retention = salience-and-supersession** (`db.js`): `salienceOf` ranks at recall
-  (relevance × recency × importance × confidence × outcome); recency is a live Ebbinghaus decay (72h
-  half-life) — nothing is stored as a decaying number. Recall bumps `access_count` ("pays rent").
-  Supersession **demotes, never deletes** (superseded leaves default `kb_recall` but stays queryable;
-  raw `kb_search`/`kb_read` stay exhaustive). Burned outcomes lower confidence + flag, never silent-delete.
-- **Contract**: agent writes enter `review_status='pending'` at `'inferred'` confidence (correctness gate);
-  the user disposes via `kb_memory_review`/dashboard. **Provenance is set at the call site, not inferred by
-  transport** (the shared tool handler can't see transport). Coined handover terms (constraint-store
-  versioning / reasoning-hash / decay-by-outcome) were validated as UNVERIFIED and **adapted + renamed**,
-  not adopted.
+### Two-way memory spine (Claude ⇄ User) — `src/memory/`
+Kaiba is a **bidirectional shared memory** the session loads from and saves to, not a one-way user tool.
+First-principles rebuild contract: `docs/memory-bridge/07-spine-rebuild.md` (history: `01`→`06`).
+- **Memory is a first-class entity** — its own `memories` table (schema owned by `db.js` `initSchema`; ops by
+  `src/memory/store.js`), NOT columns bolted onto `documents`. One taxonomy: `kind`
+  {`episodic`,`semantic`,`procedural`} (`working` = ephemeral, never persisted). Columns: `kind`, `content`,
+  `reasoning`, `created_by` (user/agent), `confidence` (verified/asserted/inferred/unverified), `importance`,
+  `project`, `source` (JSON), `outcome`, `use_count`, `last_used_at`, `superseded_by`, `supersession_reason`,
+  `review_status` (pending/accepted/rejected), `content_hash`, `embedding`, `created_at`, `updated_at`.
+  `memories_fts` (external-content FTS5 over content+reasoning) — memories are **born indexed** (never UPDATE a
+  pre-FTS row → avoids `SQLITE_CORRUPT_VTAB`).
+- **The spine (`src/memory/spine.js`)** — `kb spine install` wires two Claude Code hooks into
+  `~/.claude/settings.json` (idempotent merge, backs up to `.bak-kaiba`): **SessionStart** → inject `kb brief`
+  as `additionalContext` (auto-LOAD); **Stop** → `kb consolidate --from-transcript` over the transcript JSONL
+  (auto-SAVE). `extractTranscriptText` parses the Claude Code transcript. Loading/saving are ambient.
+- **Core ops (`store.js`)**: `remember` (agent→pending/capped-below-verified, user→accepted; dedup by
+  content_hash; best-effort embed), `recall` (salience-ranked, semantic w/ FTS fallback, strengthen-on-recall),
+  `brief` = THE session load (CORE by importance + recently-used + pending count), `review` (accept/reject),
+  `supersede` (demote-don't-delete), `recordOutcome` (burn lowers confidence one notch), `consolidate` (LLM
+  extract → dedup → pending; `extractResultText` tolerates the `claude` CLI's stream-array envelope),
+  `migrateFromDocuments`, `exportNDJSON`/`importNDJSON` (untrusted import → forced pending, confidence capped).
+- **One salience formula** (computed live; nothing decaying is stored):
+  `relevance × (0.4·recency + 0.6·importance) × confidenceWeight × outcomeMultiplier`; `recency =
+  exp(-ln2·Δh/halfLife[kind])` (episodic 24h, semantic 720h, procedural 4320h).
+- **MCP tools** (`src/tools.js`, lean set): `kb_remember`, `kb_recall`, `kb_memory_outcome`, `kb_supersede`,
+  `kb_session_brief`, `kb_memory_review` (admin), `kb_consolidate` (admin). **REST**: agent side
+  `/api/v1/memory/*` (`routes/v1.js`, `created_by=agent`), user side `/api/memory/*` (`routes/api.js`, cookie
+  auth, `created_by=user`). **Provenance is set at the call site, never client-supplied** — an MCP/REST caller
+  cannot forge `user` or self-declare `verified`. The review queue is provenance-agnostic (anything pending).
+- **Cut in the rebuild** (deleted from the core, in git history on `master`): FSRS storage-strength, PE-TD
+  predicted-outcome, MMR diversity, temperature/seed sampling, prioritized replay, the `workspace` blackboard
+  (`kb_workspace`), deps-hash staleness, conflict surfacing (`kb_memory_conflicts`). Restraint is the point —
+  mechanism front-ran the evidence; they return only when real recall data shows they pay rent.
 
 ### Auth model
 - **Dashboard**: bcrypt password stored in `config.json`; 24h session tokens in SQLite `sessions` table; HttpOnly cookie `kb_session`
 - **External API**: Three named API keys (`KB_API_KEY_CLAUDE`, `KB_API_KEY_OPENAI`, `KB_API_KEY_GEMINI`) or OAuth 2.1 Bearer via `better-auth`
 - **ADMIN_ONLY_TOOLS**: `kb_classify`, `kb_promote`, `kb_synthesize`, `kb_safety_check`, `kb_capture_youtube`, `kb_delete`, `kb_memory_review`, `kb_consolidate` — gated in the MCP HTTP handler
 
-### Environment variables (`.env` in repo root)
+### Environment variables (`.env` in `~/.knowledge-base/`)
 | Variable | Purpose |
 |----------|---------|
 | `KB_PASSWORD` | Dashboard password (first-run auto-provision) |
@@ -166,10 +169,8 @@ Full design + the adversarial validation it rests on: `docs/memory-bridge/` (`01
 | `KB_API_KEY_GEMINI` | API key for Gemini access |
 | `BETTER_AUTH_SECRET` | OAuth token signing secret |
 | `BETTER_AUTH_URL` | OAuth issuer URL (for remote deployment) |
-| `CLASSIFY_MODEL` | Claude model for AI classification (default: claude-haiku-4-5-20251001) |
+| `CLASSIFY_MODEL` | Claude model for AI classification/consolidation (default: claude-haiku-4-5-20251001) |
 | `KB_CORS_ORIGINS` | Comma-separated extra CORS origins |
-| `KB_RECALL_TEMPERATURE` | Recall stochasticity (default `0` = deterministic top-k; >0 samples by salience) |
-| `KB_RECALL_DIVERSITY` | MMR diversity λ for recall (default `0` = pure salience; 0<λ<1 = complementary results) |
 | `CLAUDE_PATH` | Full path to `claude` CLI binary (Windows: set to `claude.cmd` path if spawn fails with ENOENT) |
 
 ### Important constraints

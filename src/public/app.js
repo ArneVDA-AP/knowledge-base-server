@@ -365,17 +365,18 @@ function buildMemoryCard(m, opts) {
 
   const head = document.createElement('div');
   head.className = 'memory-card-head';
+  // Memories have no title — the content IS the memory. Label the card by its kind.
   const title = document.createElement('strong');
-  title.textContent = m.title || '(untitled)';
+  title.textContent = m.kind || 'memory';
   head.appendChild(title);
 
   const badges = document.createElement('div');
   badges.className = 'memory-badges';
   badges.appendChild(memBadge(m.created_by || 'system', 'prov-' + (m.created_by || 'system')));
   if (m.confidence) badges.appendChild(memBadge(m.confidence));
-  if (m.review_status && m.review_status !== 'none') badges.appendChild(memBadge(m.review_status, m.review_status === 'flagged' ? 'error' : ''));
+  if (m.review_status && m.review_status !== 'none') badges.appendChild(memBadge(m.review_status, m.review_status === 'rejected' ? 'error' : ''));
   if (typeof m.salience === 'number') badges.appendChild(memBadge('sal ' + m.salience));
-  if (m.stale) badges.appendChild(memBadge('stale', 'error'));
+  if (m.superseded_by) badges.appendChild(memBadge('superseded', 'error'));
   head.appendChild(badges);
   card.appendChild(head);
 
