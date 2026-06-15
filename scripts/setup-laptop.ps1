@@ -213,7 +213,8 @@ foreach ($key in $desired.Keys) {
 }
 
 if ($PSCmdlet.ShouldProcess($envPath, "Write merged .env")) {
-    Set-Content -LiteralPath $envPath -Value $result -Encoding UTF8
+    # BOM-less UTF-8: Set-Content -Encoding UTF8 on PS 5.1 emits a BOM that can corrupt the first .env key.
+    [System.IO.File]::WriteAllLines($envPath, [string[]]$result, (New-Object System.Text.UTF8Encoding $false))
     Good "Wrote: $envPath"
 } else {
     Info "(dry run) would write the following managed keys to ${envPath}:"

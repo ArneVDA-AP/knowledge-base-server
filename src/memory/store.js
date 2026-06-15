@@ -3,10 +3,11 @@
 // (episodic|semantic|procedural), one salience formula, a human-disposed review queue, and a brief that
 // is THE session-start load. Deliberately lean — the speculative machinery is intentionally absent.
 import { createHash } from 'crypto';
-import { readdirSync, readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
-import { hostname, homedir } from 'os';
+import { readdirSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { hostname } from 'os';
 import { join } from 'path';
 import { getDb } from '../db.js';
+import { DEFAULT_BRAIN_SYNC_DIR } from '../paths.js';
 import { generateEmbedding, embeddingToBuffer, bufferToEmbedding, cosineSimilarity } from '../embeddings/embed.js';
 import { runClaude } from '../utils/claude.js';
 
@@ -25,7 +26,7 @@ function embedFn() { return _testEmbedder || generateEmbedding; }
 
 // --- helpers ---
 function clamp01(v) { const n = v == null ? 0.5 : Number(v); return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0.5; }
-function computeHash(content) { return createHash('sha256').update(String(content)).digest('hex').slice(0, 32); }
+export function computeHash(content) { return createHash('sha256').update(String(content)).digest('hex').slice(0, 32); }
 function sqliteTimeToDate(ts) { if (!ts) return null; const d = new Date(String(ts).replace(' ', 'T') + 'Z'); return isNaN(d.getTime()) ? null : d; }
 
 function retrievability(m) {
@@ -521,7 +522,7 @@ export function machineId() {
   const raw = (process.env.KB_MACHINE_ID || hostname() || 'machine').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
   return raw || 'machine';
 }
-function brainSyncDir(dir) { return dir || process.env.KB_BRAIN_SYNC_DIR || join(homedir(), 'My Drive', 'kaiba-sync', 'brain'); }
+function brainSyncDir(dir) { return dir || process.env.KB_BRAIN_SYNC_DIR || DEFAULT_BRAIN_SYNC_DIR; }
 
 // The trusted bidirectional merge. Reads every OTHER machine's NDJSON, merges into the local db, then
 // rewrites this machine's own file with the full post-merge union (gossip). Each machine owns exactly one
