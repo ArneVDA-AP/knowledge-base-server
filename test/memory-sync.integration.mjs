@@ -2,15 +2,13 @@
 // 'SYNCTEST%' rows (never touches the user's real memories — no peer record shares their content_hash) and
 // uses a throwaway temp sync dir. Cleans up in finally. Run: `node test/memory-sync.integration.mjs`.
 import assert from 'node:assert';
-import { createHash } from 'node:crypto';
 import { mkdtempSync, writeFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getDb } from '../src/db.js';
-import { syncMemories, exportSyncRecords, recall, briefMarkdown, _setAutoEmbed } from '../src/memory/store.js';
+import { syncMemories, exportSyncRecords, recall, briefMarkdown, computeHash as hash, _setAutoEmbed } from '../src/memory/store.js';
 
 _setAutoEmbed(false);                                  // offline: no model load
-const hash = (c) => createHash('sha256').update(c).digest('hex').slice(0, 32);
 const db = getDb();
 let pass = 0, fail = 0, dir;
 const t = (name, fn) => { try { fn(); pass++; console.log(`  ok  ${name}`); } catch (e) { fail++; console.error(`FAIL  ${name}\n      ${e.message}`); } };

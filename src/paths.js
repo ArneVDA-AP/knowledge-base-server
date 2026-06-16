@@ -10,6 +10,10 @@ export const CONFIG_PATH = join(KB_DIR, 'config.json');
 export const PID_PATH = join(KB_DIR, 'kb.pid');
 export const ENV_PATH = join(KB_DIR, '.env');
 
+// Default shared dir for cross-device memory-brain sync (per-machine NDJSON files live here).
+// Overridable via KB_BRAIN_SYNC_DIR; never holds kb.db (only the NDJSON wire format crosses Drive).
+export const DEFAULT_BRAIN_SYNC_DIR = join(homedir(), 'My Drive', 'kaiba-sync', 'brain');
+
 mkdirSync(FILES_DIR, { recursive: true });
 
 // Load .env from KB_DIR — the canonical config location.
